@@ -181,6 +181,25 @@ def append_to_processed_file(entries):
             f.write(f"  Sentence: {entry['sentence']}\n\n")
 
 
+def rewrite_input_file(entries):
+    """Rewrite the input file with only the remaining (failed) entries."""
+    if not entries:
+        # If no entries remain, clear the file
+        with open(INPUT_FILE, 'w', encoding='utf-8') as f:
+            f.write("")
+        return
+
+    # Write remaining entries back to file
+    with open(INPUT_FILE, 'w', encoding='utf-8') as f:
+        for i, entry in enumerate(entries):
+            f.write(f"{entry['sentence']}\n")
+            f.write(f"{entry['word']}\n")
+            f.write(f"{entry['translation']}\n")
+            # Add blank line between entries, but not after the last one
+            if i < len(entries) - 1:
+                f.write("\n")
+
+
 def main():
     """Main function to process sentences and create Anki cards."""
     print("="*60)
@@ -209,8 +228,8 @@ def main():
     print(f"Found {len(entries)} entries to process\n")
 
     # Process each entry
-    successful = 0
-    failed = 0
+    successful_entries = []
+    failed_entries = []
 
     for idx, entry in enumerate(entries, 1):
         try:
@@ -223,31 +242,44 @@ def main():
             )
 
             print(f"✓ Added (Note ID: {note_id})")
-            successful += 1
+            successful_entries.append(entry)
 
         except Exception as e:
             print(f"✗ Failed: {e}")
-            failed += 1
+            failed_entries.append(entry)
 
     print()
     print("="*60)
     print(f"Processing complete!")
-    print(f"  Successful: {successful}")
-    print(f"  Failed: {failed}")
+    print(f"  Successful: {len(successful_entries)}")
+    print(f"  Failed: {len(failed_entries)}")
     print("="*60)
 
     # Append to processed file
-    if successful > 0:
+    if successful_entries:
         try:
-            append_to_processed_file([e for i, e in enumerate(entries) if i < successful])
+            append_to_processed_file(successful_entries)
             print(f"\nProcessed words logged to '{PROCESSED_FILE}'")
         except Exception as e:
             print(f"\nWarning: Failed to update processed file: {e}")
 
+    # Remove successfully processed entries from input file
+    if successful_entries:
+        try:
+            rewrite_input_file(failed_entries)
+            if failed_entries:
+                print(f"'{INPUT_FILE}' updated - {len(successful_entries)} entries removed, {len(failed_entries)} remaining")
+            else:
+                print(f"'{INPUT_FILE}' cleared - all entries processed successfully")
+        except Exception as e:
+            print(f"\nWarning: Failed to update input file: {e}")
+            print(f"You may need to manually remove processed entries from '{INPUT_FILE}'")
+
     print()
     print("Next steps:")
     print(f"1. Check your '{DECK_NAME}' deck in Anki")
-    print(f"2. Clear or remove processed entries from '{INPUT_FILE}'")
+    if failed_entries:
+        print(f"2. Review and fix the {len(failed_entries)} failed entries in '{INPUT_FILE}'")
     print()
 
 
