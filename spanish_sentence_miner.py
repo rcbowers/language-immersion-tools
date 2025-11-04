@@ -230,13 +230,23 @@ def main():
     # Process each entry
     successful_entries = []
     failed_entries = []
+    sentence_counts = {}  # Track duplicate sentences
 
     for idx, entry in enumerate(entries, 1):
         try:
             print(f"[{idx}/{len(entries)}] Processing: {entry['word']}", end=" ... ")
 
+            # Check for duplicate sentences and append suffix if needed
+            sentence = entry['sentence']
+            if sentence in sentence_counts:
+                sentence_counts[sentence] += 1
+                sentence_with_suffix = f"{sentence} ({sentence_counts[sentence]})"
+            else:
+                sentence_counts[sentence] = 1
+                sentence_with_suffix = sentence
+
             note_id = add_anki_card(
-                entry['sentence'],
+                sentence_with_suffix,
                 entry['word'],
                 entry['translation']
             )
