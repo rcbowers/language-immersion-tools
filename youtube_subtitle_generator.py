@@ -123,7 +123,7 @@ def main():
     parser.add_argument(
         "-m", "--model",
         choices=["tiny", "base", "small", "medium", "large"],
-        default="large",
+        default="medium",
         help="Whisper model size (default: base). Larger = more accurate but slower."
     )
     parser.add_argument(
@@ -151,10 +151,10 @@ def main():
     args = parser.parse_args()
 
     for url in [
-        'https://youtu.be/ZZiY6Q4Lgus?si=XMuxMACwNW-Sy2_z',
-        'https://youtu.be/AQF519M7xB0?si=KgCSAxXAMi_it6No',
-        'https://youtu.be/AQF519M7xB0?si=98rgj8lKVgHQTUiX',
-        'https://youtu.be/gZWpD0VsRMg?si=WRY8nO-GMTEkIHGp',
+       # 'https://youtu.be/ZZiY6Q4Lgus?si=XMuxMACwNW-Sy2_z',
+        #'https://youtu.be/AQF519M7xB0?si=KgCSAxXAMi_it6No',
+        #'https://youtu.be/AQF519M7xB0?si=98rgj8lKVgHQTUiX',
+        'https://www.youtube.com/watch?v=gZWpD0VsRMg',
         'https://youtu.be/AEtZekVZJvs?si=Cjn2600rVG3v3CAF',
         'https://youtu.be/Lq0MsaJdB08?si=Tov2_TF40frIuX3i',
         'https://youtu.be/sw_Xh7DFQTs?si=JdHlrHAiCDF7g1FS',
@@ -210,7 +210,7 @@ def main():
             sys.exit(1)
         except Exception as e:
             print(f"\n❌ Error: {e}")
-            sys.exit(1)
+            continue
 
 
 if __name__ == "__main__":
