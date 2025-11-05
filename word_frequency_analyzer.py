@@ -13,6 +13,7 @@ from collections import Counter
 from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib
+import unicodedata
 matplotlib.use('Agg')  # Use non-interactive backend for compatibility
 
 # PDF parsing imports - will be imported conditionally
@@ -22,19 +23,27 @@ try:
 except ImportError:
     PDF_AVAILABLE = False
 
+# spaCy imports for lemmatization
+try:
+    import spacy
+    SPACY_AVAILABLE = True
+except ImportError:
+    SPACY_AVAILABLE = False
+
 
 # Common Spanish stopwords to filter out
 SPANISH_STOPWORDS = {'es', 'tulio', 'el','oh','te','una','un','uno','ah','vamos','voy','esta','esto','este',
     'el', 'la', 'de', 'que', 'y', 'a', 'en', 'un', 'ser', 'se', 'no', 'haber',
     'por', 'con', 'su', 'para', 'como', 'estar', 'tener', 'le', 'lo', 'todo',
-    'pero', 'más', 'hacer', 'o', 'poder', 'decir', 'este', 'ir', 'otro', 'ese',
+    'pero', 'más', 'hacer', 'o', 'este', 'ir', 'otro', 'ese', 'algo', 'tanto', 'mientras', 'hacia',
     'la', 'si', 'me', 'ya', 'ver', 'porque', 'dar', 'cuando', 'él', 'muy',
     'sin', 'vez', 'mucho', 'saber', 'qué', 'sobre', 'mi', 'alguno', 'mismo',
     'yo', 'también', 'hasta', 'año', 'dos', 'querer', 'entre', 'así',
     'desde', 'grande', 'eso', 'ni', 'nos', 'ella',
     'sí', 'día', 'uno', 'bien', 'poco', 'deber', 'entonces',
     'nuestro', 'tan', 'donde', 'ahora', 'parte',
-    'acabar', 'millón', 'ante', 'las', 'los', 'del', 'al'
+    'las', 'los', 'del', 'al',
+    'harry','tu','ron','hagrid','mas','decir','poder'
 }
 
 
@@ -74,6 +83,47 @@ def clean_spanish_text(text):
     text = re.sub(r'\s+', ' ', text)
 
     return text.strip()
+
+
+def normalize_accents(text):
+    """
+    Normalize accented characters to their unaccented equivalents.
+
+    Args:
+        text: Text string with possible accents
+
+    Returns:
+        Text with accents normalized (e.g., 'miró' -> 'miro')
+    """
+    # Decompose characters into base + combining marks, then remove combining marks
+    nfd = unicodedata.normalize('NFD', text)
+    return ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
+
+
+def lemmatize_spanish_text(text, nlp):
+    """
+    Lemmatize Spanish text to group conjugations as the same word.
+
+    Args:
+        text: Cleaned Spanish text
+        nlp: Loaded spaCy Spanish model
+
+    Returns:
+        List of lemmatized words with accents normalized
+    """
+    # Process text with spaCy
+    doc = nlp(text)
+
+    # Extract lemmas and normalize accents
+    lemmas = []
+    for token in doc:
+        if token.is_alpha:  # Only keep alphabetic tokens
+            lemma = token.lemma_.lower()
+            # Normalize accents so 'miró' and 'miro' are treated as same
+            lemma = normalize_accents(lemma)
+            lemmas.append(lemma)
+
+    return lemmas
 
 
 def parse_srt_file(filepath):
@@ -210,7 +260,7 @@ def filter_stopwords(words, remove_stopwords=True):
     return filtered_words, stopwords_count
 
 
-def analyze_documents(path, file_types=None, remove_stopwords=True):
+def analyze_documents(path, file_types=None, remove_stopwords=True, nlp=None):
     """
     Analyze document files in a folder or analyze a single file.
 
@@ -219,6 +269,7 @@ def analyze_documents(path, file_types=None, remove_stopwords=True):
         file_types: List of file extensions to include (e.g., ['.srt', '.pdf', '.txt']).
                    If None, includes all supported types.
         remove_stopwords: Whether to remove common Spanish stopwords
+        nlp: spaCy model for lemmatization (optional). If provided, words will be lemmatized.
 
     Returns:
         Tuple of (word_freq, stopwords_filtered, total_words_after_filtering, unique_words)
@@ -258,6 +309,13 @@ def analyze_documents(path, file_types=None, remove_stopwords=True):
         print(f"Processing: {doc_file.name}")
         words = parse_document(doc_file)
         all_words.extend(words)
+
+    # Apply lemmatization if spaCy model is provided
+    if nlp is not None:
+        print("Applying lemmatization to group conjugations...")
+        # Convert word list to text for spaCy processing
+        text = ' '.join(all_words)
+        all_words = lemmatize_spanish_text(text, nlp)
 
     # Filter stopwords if requested
     stopwords_filtered = 0
@@ -453,14 +511,31 @@ Examples:
     args = parser.parse_args()
 
     try:
+        # Initialize spaCy model for lemmatization
+        nlp = None
+        if SPACY_AVAILABLE:
+            try:
+                print("Loading spaCy Spanish model for lemmatization...")
+                nlp = spacy.load("es_core_news_sm")
+                print("Lemmatization enabled - conjugations will be grouped together\n")
+            except OSError:
+                print("Warning: spaCy Spanish model 'es_core_news_sm' not found.")
+                print("Lemmatization disabled. Words will be counted as written.")
+                print("To enable lemmatization, run: python -m spacy download es_core_news_sm\n")
+        else:
+            print("Warning: spaCy not installed. Lemmatization disabled.")
+            print("To enable lemmatization, run: pip install spacy")
+            print("Then: python -m spacy download es_core_news_sm\n")
+
         # Analyze the path
         path_type = "file" if Path(args.path).is_file() else "folder"
-        print(f"\nAnalyzing documents in {path_type}: {args.path}\n")
+        print(f"Analyzing documents in {path_type}: {args.path}\n")
 
         word_freq, stopwords_filtered, total_words, unique_words = analyze_documents(
             args.path,
             file_types=args.types,
-            remove_stopwords=not args.keep_stopwords
+            remove_stopwords=not args.keep_stopwords,
+            nlp=nlp
         )
 
         # Extract source filename for output naming
