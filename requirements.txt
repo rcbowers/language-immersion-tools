@@ -2,5 +2,6 @@ openai-whisper
 yt-dlp
 ffmpeg-python
 spacy>=3.0.0
+googletrans==4.0.0-rc1
 # After installing requirements, download Spanish model with:
 # python -m spacy download es_core_news_sm
