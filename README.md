@@ -7,8 +7,11 @@ A collection of Python tools designed to supercharge your language immersion wor
 ### 1. YouTube Subtitle Generator
 Automatically generate accurate subtitles for YouTube videos using OpenAI's Whisper AI. Perfect for creating subtitles for content that doesn't have them, or for getting cleaner transcripts for sentence mining.
 
-### 2. Spanish Sentence Miner
-Automate your sentence mining workflow by converting sentences with target words into Anki flashcards via the AnkiConnect API. Words are highlighted in the context sentence for easy recognition.
+### 2. Spanish Sentence Miner (GUI)
+Interactive tkinter-based GUI for creating Anki flashcards with automatic translation. Paste Spanish sentences, double-click target words, and automatically translate both - all in one streamlined interface.
+
+### 3. Spanish Sentence Miner (CLI)
+Batch process pre-formatted sentences from a text file and automatically create Anki flashcards via the AnkiConnect API. Words are highlighted in the context sentence for easy recognition.
 
 ## Prerequisites
 
@@ -96,9 +99,63 @@ python youtube_subtitle_generator.py -o "my_subtitles" "URL"
 
 ---
 
-## Spanish Sentence Miner
+## Spanish Sentence Miner (GUI)
 
-Automate creating Anki flashcards from Spanish sentences with target vocabulary words.
+Interactive GUI tool for creating Anki flashcards with automatic translation powered by Google Translate.
+
+### Features
+
+- **Paste & Click Interface**: Paste Spanish sentences and double-click target words
+- **Automatic Translation**: Both full sentences and individual words are translated automatically
+- **Live Preview**: See translations before adding to your word list
+- **Session Counter**: Track how many words you've added in your current session
+- **Batch Processing**: Process all entries from `words_to_process.txt` at once
+- **Anki Integration**: Direct connection to Anki via AnkiConnect
+
+### Setup
+
+1. Make sure Anki is running
+2. Install the required dependency:
+   ```bash
+   pip install googletrans==4.0.0-rc1
+   ```
+3. Edit `spanish_sentence_miner.py` configuration if needed:
+   - `DECK_NAME`: Your target Anki deck (default: "2025 Spanish Immersion")
+   - `MODEL_NAME`: Card type (default: "Basic")
+
+### Usage
+
+```bash
+python sentence_miner_gui.py
+```
+
+### Workflow
+
+1. **Paste Spanish sentence** into the text area
+   - The full sentence is automatically translated to English
+2. **Double-click the target word** you want to learn
+   - The word is highlighted in yellow/red
+   - The individual word is automatically translated
+3. **Click "Add to Words List"**
+   - Saves the sentence + target word + translation to `words_to_process.txt`
+   - Clears the form for the next entry
+   - Increments the session counter
+4. **Click "Process All → Anki"** when ready
+   - Batch processes all entries from `words_to_process.txt`
+   - Creates Anki flashcards with highlighted target words
+   - Removes successful entries from the file
+
+### Card Format
+
+- **Front**: Spanish sentence with target word highlighted in red
+- **Back**: English translation of the target word
+- **Tags**: `sentence-mining`, `auto-generated`
+
+---
+
+## Spanish Sentence Miner (CLI)
+
+Command-line batch processing tool for creating Anki flashcards from pre-formatted text files.
 
 ### Setup
 
@@ -163,12 +220,20 @@ The script will:
 3. Extract interesting sentences for sentence mining
 4. Use the sentence miner to create Anki cards
 
-### For Sentence Mining
+### For Sentence Mining with GUI
+
+1. Generate subtitles for content at your level
+2. Open the `.srt` file and find sentences with target vocabulary
+3. Launch `sentence_miner_gui.py`
+4. Paste sentences and double-click target words - translations happen automatically
+5. Click "Process All → Anki" when you have a batch ready
+
+### For Batch Sentence Mining (CLI)
 
 1. Generate subtitles for content at your level
 2. Open the `.srt` file and find sentences with target vocabulary
 3. Format them in `words_to_process.txt`
-4. Run the sentence miner to batch-create flashcards
+4. Run `spanish_sentence_miner.py` to batch-create flashcards
 
 ### For Testing Comprehension
 
