@@ -27,7 +27,7 @@ class SentenceMinerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Spanish Sentence Miner")
-        self.root.geometry("900x700")
+        self.root.geometry("1100x850")
 
         # Initialize translator
         self.translator = Translator()
@@ -38,6 +38,7 @@ class SentenceMinerGUI:
         # Current selection
         self.selected_word = None
         self.sentence_counts = {}  # Track duplicate sentences
+        self.is_manual_translation = False  # Track if translation was manually selected
 
         # Create GUI
         self.create_widgets()
@@ -59,67 +60,78 @@ class SentenceMinerGUI:
 
         # Title
         title_label = ttk.Label(main_frame, text="Spanish Sentence Miner",
-                               font=('Arial', 16, 'bold'))
+                               font=('Arial', 24, 'bold'))
         title_label.grid(row=0, column=0, pady=(0, 10))
 
         # Status bar
         self.status_label = ttk.Label(main_frame, text="Checking Anki connection...",
-                                     foreground="gray")
+                                     foreground="gray", font=('Arial', 15))
         self.status_label.grid(row=1, column=0, pady=(0, 5))
 
         # Counter
         self.counter_label = ttk.Label(main_frame, text="Words added this session: 0",
-                                      font=('Arial', 10, 'bold'))
+                                      font=('Arial', 15, 'bold'))
         self.counter_label.grid(row=2, column=0, pady=(0, 10))
 
         # Instructions
         instructions = ttk.Label(main_frame,
-                                text="Paste Spanish sentence below, then double-click the target word:",
-                                font=('Arial', 10))
+                                text="Paste Spanish sentence below, then select target word(s) (double-click or click-and-drag):",
+                                font=('Arial', 15))
         instructions.grid(row=3, column=0, sticky=tk.W, pady=(10, 5))
 
         # Spanish sentence input area
         sentence_frame = ttk.LabelFrame(main_frame, text="Spanish Sentence", padding="5")
         sentence_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=5)
         sentence_frame.columnconfigure(0, weight=1)
+        sentence_frame.configure(relief='solid', borderwidth=2)
 
         self.sentence_text = tk.Text(sentence_frame, height=3, width=80, wrap=tk.WORD,
-                                     font=('Arial', 11))
+                                     font=('Arial', 16), bg='#E3F2FD')
         self.sentence_text.grid(row=0, column=0, sticky=(tk.W, tk.E))
         self.sentence_text.bind('<KeyRelease>', self.on_sentence_change)
         self.sentence_text.bind('<Double-Button-1>', self.on_word_double_click)
+        self.sentence_text.bind('<ButtonRelease-1>', self.on_text_selection)
+        self.sentence_text.bind('<<Paste>>', self.on_paste)
 
         # Selected target word display
-        word_frame = ttk.LabelFrame(main_frame, text="Target Word (Double-click to select)",
+        word_frame = ttk.LabelFrame(main_frame, text="Target Word/Phrase (Double-click or drag to select)",
                                    padding="5")
         word_frame.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=5)
         word_frame.columnconfigure(0, weight=1)
+        word_frame.configure(relief='solid', borderwidth=2)
 
-        self.target_word_label = ttk.Label(word_frame, text="(No word selected)",
-                                          font=('Arial', 12, 'bold'),
-                                          foreground="red")
-        self.target_word_label.grid(row=0, column=0)
+        # Create a frame inside to apply background color
+        word_inner_frame = tk.Frame(word_frame, bg='#FFF9C4')
+        word_inner_frame.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        word_inner_frame.columnconfigure(0, weight=1)
+
+        self.target_word_label = tk.Label(word_inner_frame, text="(No word selected)",
+                                          font=('Arial', 18, 'bold'),
+                                          foreground="red", bg='#FFF9C4')
+        self.target_word_label.grid(row=0, column=0, pady=5)
 
         # Translations display
         translation_frame = ttk.LabelFrame(main_frame, text="Translations", padding="5")
         translation_frame.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=5)
         translation_frame.columnconfigure(0, weight=1)
+        translation_frame.configure(relief='solid', borderwidth=2)
 
         # Sentence translation
-        ttk.Label(translation_frame, text="Full Sentence:").grid(row=0, column=0,
+        ttk.Label(translation_frame, text="Full Sentence (click word/phrase for back of card):", font=('Arial', 15, 'bold')).grid(row=0, column=0,
                                                                  sticky=tk.W)
         self.sentence_translation_text = scrolledtext.ScrolledText(
             translation_frame, height=2, width=80, wrap=tk.WORD,
-            font=('Arial', 10), state='disabled'
+            font=('Arial', 16), bg='#E8F5E9', cursor='hand2'
         )
         self.sentence_translation_text.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        self.sentence_translation_text.bind('<Button-1>', self.on_translation_click)
 
         # Word translation
-        ttk.Label(translation_frame, text="Target Word:").grid(row=2, column=0,
-                                                               sticky=tk.W)
+        self.word_translation_label = ttk.Label(translation_frame, text="Target Word/Phrase (auto):", font=('Arial', 15, 'bold'))
+        self.word_translation_label.grid(row=2, column=0, sticky=tk.W)
         self.word_translation_text = scrolledtext.ScrolledText(
             translation_frame, height=2, width=80, wrap=tk.WORD,
-            font=('Arial', 10), state='disabled'
+            font=('Arial', 16), state='disabled', bg='#E8F5E9'
         )
         self.word_translation_text.grid(row=3, column=0, sticky=(tk.W, tk.E))
 
@@ -127,15 +139,19 @@ class SentenceMinerGUI:
         buttons_frame = ttk.Frame(main_frame)
         buttons_frame.grid(row=7, column=0, pady=20)
 
+        # Configure button style for larger text
+        style = ttk.Style()
+        style.configure('Large.TButton', font=('Arial', 14))
+
         # Add to words list button
         self.add_button = ttk.Button(buttons_frame, text="Add to Words List",
                                     command=self.add_to_words_list,
-                                    state='disabled')
+                                    state='disabled', style='Large.TButton')
         self.add_button.grid(row=0, column=0, padx=5)
 
         # Clear form button
         clear_button = ttk.Button(buttons_frame, text="Clear Form",
-                                 command=self.clear_form)
+                                 command=self.clear_form, style='Large.TButton')
         clear_button.grid(row=0, column=1, padx=5)
 
         # Separator
@@ -146,15 +162,22 @@ class SentenceMinerGUI:
         # Batch processing section
         batch_frame = ttk.LabelFrame(main_frame, text="Batch Processing", padding="10")
         batch_frame.grid(row=9, column=0, sticky=(tk.W, tk.E))
+        batch_frame.configure(relief='solid', borderwidth=2)
 
-        batch_label = ttk.Label(batch_frame,
-                               text=f"Process all entries from {INPUT_FILE} and add to Anki:")
-        batch_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
+        # Create inner frame for background color
+        batch_inner_frame = tk.Frame(batch_frame, bg='#F5F5F5')
+        batch_inner_frame.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        batch_frame.columnconfigure(0, weight=1)
 
-        self.process_button = ttk.Button(batch_frame, text="Process All → Anki",
+        batch_label = tk.Label(batch_inner_frame,
+                               text=f"Process all entries from {INPUT_FILE} and add to Anki:",
+                               font=('Arial', 15), bg='#F5F5F5')
+        batch_label.grid(row=0, column=0, sticky=tk.W, pady=(5, 10), padx=5)
+
+        self.process_button = ttk.Button(batch_inner_frame, text="Process All → Anki",
                                         command=self.process_all_to_anki,
-                                        state='disabled')
-        self.process_button.grid(row=1, column=0)
+                                        state='disabled', style='Large.TButton')
+        self.process_button.grid(row=1, column=0, pady=(0, 5), padx=5)
 
         # Configure row weights for proper expansion
         for i in range(10):
@@ -184,6 +207,27 @@ class SentenceMinerGUI:
             self.status_label.config(text=f"✗ Error: {str(e)}", foreground="red")
             messagebox.showerror("Connection Error", str(e))
 
+    def on_paste(self, event=None):
+        """Handle paste event - strip line breaks from pasted text."""
+        try:
+            # Get clipboard content
+            clipboard_text = self.root.clipboard_get()
+
+            # Strip line breaks and carriage returns
+            cleaned_text = clipboard_text.replace('\n', ' ').replace('\r', ' ')
+
+            # Remove multiple spaces
+            cleaned_text = ' '.join(cleaned_text.split())
+
+            # Insert cleaned text at cursor position
+            self.sentence_text.insert(tk.INSERT, cleaned_text)
+
+            # Prevent default paste behavior
+            return "break"
+        except Exception:
+            # If clipboard is empty or error occurs, allow default behavior
+            pass
+
     def on_sentence_change(self, event=None):
         """Handle sentence text changes - translate when pasted."""
         sentence = self.sentence_text.get("1.0", tk.END).strip()
@@ -206,16 +250,12 @@ class SentenceMinerGUI:
             translation = self.translator.translate(sentence, src='es', dest='en')
 
             # Update the sentence translation display
-            self.sentence_translation_text.config(state='normal')
             self.sentence_translation_text.delete("1.0", tk.END)
             self.sentence_translation_text.insert("1.0", translation.text)
-            self.sentence_translation_text.config(state='disabled')
 
         except Exception as e:
-            self.sentence_translation_text.config(state='normal')
             self.sentence_translation_text.delete("1.0", tk.END)
             self.sentence_translation_text.insert("1.0", f"Translation error: {str(e)}")
-            self.sentence_translation_text.config(state='disabled')
 
     def on_word_double_click(self, event):
         """Handle double-click on a word to select it as target."""
@@ -262,6 +302,30 @@ class SentenceMinerGUI:
             # Translate the selected word
             self.translate_word(word)
 
+    def on_text_selection(self, event):
+        """Handle text selection (click-and-drag) for multi-word phrases."""
+        try:
+            # Get the selected text
+            selected = self.sentence_text.get(tk.SEL_FIRST, tk.SEL_LAST).strip()
+
+            if selected and len(selected) > 0:
+                self.selected_word = selected
+                self.target_word_label.config(text=selected)
+
+                # Clear previous highlighting
+                self.sentence_text.tag_remove("highlight", "1.0", tk.END)
+
+                # Highlight the selection
+                self.highlight_word_occurrences(selected)
+
+                # Translate the selected phrase
+                self.translate_word(selected)
+                self.is_manual_translation = False  # Reset to auto when new selection made
+                self.word_translation_label.config(text="Target Word/Phrase (auto):")
+        except tk.TclError:
+            # No selection made, ignore
+            pass
+
     def highlight_word_occurrences(self, word):
         """Highlight all occurrences of the word in the sentence."""
         text = self.sentence_text.get("1.0", tk.END)
@@ -302,6 +366,67 @@ class SentenceMinerGUI:
             self.word_translation_text.delete("1.0", tk.END)
             self.word_translation_text.insert("1.0", f"Translation error: {str(e)}")
             self.word_translation_text.config(state='disabled')
+
+    def on_translation_click(self, event):
+        """Handle clicking on a word/phrase in the sentence translation to select it for the back of the card."""
+        # Get the clicked position
+        index = self.sentence_translation_text.index(f"@{event.x},{event.y}")
+
+        # Get the full text
+        text = self.sentence_translation_text.get("1.0", tk.END)
+
+        # Find word boundaries
+        line, char = map(int, index.split('.'))
+
+        # Calculate absolute position in text
+        lines = text.split('\n')
+        abs_pos = sum(len(lines[i]) + 1 for i in range(line - 1)) + char
+
+        # Find word boundaries (letters, numbers, apostrophes)
+        word_chars = re.compile(r'[a-zA-Z0-9\']')
+
+        # Find start of word
+        start = abs_pos
+        while start > 0 and word_chars.match(text[start - 1]):
+            start -= 1
+
+        # Find end of word
+        end = abs_pos
+        while end < len(text) and word_chars.match(text[end]):
+            end += 1
+
+        # Extract the clicked word/phrase
+        clicked_word = text[start:end].strip()
+
+        if clicked_word:
+            # Update the word translation display with the clicked text
+            self.word_translation_text.config(state='normal')
+            self.word_translation_text.delete("1.0", tk.END)
+            self.word_translation_text.insert("1.0", clicked_word)
+            self.word_translation_text.config(state='disabled')
+
+            # Mark as manually selected
+            self.is_manual_translation = True
+            self.word_translation_label.config(text="Target Word/Phrase (manual):")
+
+            # Add highlighting to show what was selected
+            self.sentence_translation_text.tag_remove("trans_highlight", "1.0", tk.END)
+            self.sentence_translation_text.tag_config("trans_highlight", background="#FFEB3B", foreground="blue")
+
+            # Highlight the clicked word in the translation
+            pattern = re.compile(re.escape(clicked_word), re.IGNORECASE)
+            for match in pattern.finditer(text):
+                start_pos = match.start()
+                end_pos = match.end()
+
+                # Convert to tkinter index format
+                lines_before = text[:start_pos].count('\n')
+                chars_in_line = start_pos - text[:start_pos].rfind('\n') - 1
+
+                start_index = f"{lines_before + 1}.{chars_in_line}"
+                end_index = f"{lines_before + 1}.{chars_in_line + len(match.group())}"
+
+                self.sentence_translation_text.tag_add("trans_highlight", start_index, end_index)
 
     def add_to_words_list(self):
         """Add the current entry to words_to_process.txt."""
@@ -372,13 +497,16 @@ class SentenceMinerGUI:
         self.selected_word = None
         self.target_word_label.config(text="(No word selected)")
 
-        self.sentence_translation_text.config(state='normal')
         self.sentence_translation_text.delete("1.0", tk.END)
-        self.sentence_translation_text.config(state='disabled')
+        self.sentence_translation_text.tag_remove("trans_highlight", "1.0", tk.END)
 
         self.word_translation_text.config(state='normal')
         self.word_translation_text.delete("1.0", tk.END)
         self.word_translation_text.config(state='disabled')
+
+        # Reset translation state
+        self.is_manual_translation = False
+        self.word_translation_label.config(text="Target Word/Phrase (auto):")
 
     def process_all_to_anki(self):
         """Process all entries from words_to_process.txt and add to Anki."""
