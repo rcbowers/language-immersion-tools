@@ -48,11 +48,11 @@ ANKI_PATH = r"C:\Program Files\Anki\anki.exe"
 
 
 class ClickablePdfLabel(QLabel):
-    clicked = Signal(QPoint, int)
+    clicked = Signal(QPoint, object)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(event.position().toPoint(), int(event.modifiers()))
+            self.clicked.emit(event.position().toPoint(), event.modifiers())
         super().mousePressEvent(event)
 
 
@@ -463,7 +463,7 @@ class PdfSentenceMinerWindow(QMainWindow):
         if not clean_word:
             return
 
-        shift_pressed = bool(modifiers & int(Qt.KeyboardModifier.ShiftModifier))
+        shift_pressed = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
         selected_words = self._resolve_selected_words(hit_word, shift_pressed)
 
         cleaned_words = []
