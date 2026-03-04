@@ -14,8 +14,9 @@ from pathlib import Path
 
 
 # Configuration
-INPUT_FILE = "../../words_to_process.txt"
-PROCESSED_FILE = "processed_words.txt"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+INPUT_FILE = str(PROJECT_ROOT / "words_to_process.txt")
+PROCESSED_FILE = str(PROJECT_ROOT / "processed_words.txt")
 DECK_NAME = "2025 Spanish Immersion"
 MODEL_NAME = "Basic"
 ANKI_CONNECT_URL = "http://localhost:8765"
