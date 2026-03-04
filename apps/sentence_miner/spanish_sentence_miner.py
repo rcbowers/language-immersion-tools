@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 # Configuration
-INPUT_FILE = "words_to_process.txt"
+INPUT_FILE = "../../words_to_process.txt"
 PROCESSED_FILE = "processed_words.txt"
 DECK_NAME = "2025 Spanish Immersion"
 MODEL_NAME = "Basic"
