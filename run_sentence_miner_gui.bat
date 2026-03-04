@@ -1,3 +1,3 @@
 @echo off
-.venv\Scripts\python.exe sentence_miner_gui.py
+.venv\Scripts\python.exe apps/sentence_miner/sentence_miner_gui.py
 pause
