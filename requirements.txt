@@ -4,5 +4,7 @@ ffmpeg-python
 spacy>=3.0.0
 googletrans==4.0.0-rc1
 psutil>=5.9.0
+PySide6>=6.7.0
+PyMuPDF>=1.24.0
 # After installing requirements, download Spanish model with:
 # python -m spacy download es_core_news_sm
