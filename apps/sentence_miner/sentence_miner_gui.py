@@ -10,6 +10,7 @@ import subprocess
 import sys
 import asyncio
 import inspect
+import json
 from pathlib import Path
 
 import fitz
@@ -133,10 +134,15 @@ class PdfSentenceMinerWindow(QMainWindow):
         self.min_ui_scale = 0.8
         self.max_ui_scale = 1.8
         self.base_font = QApplication.font()
+        self.user_data_path = Path(INPUT_FILE).resolve().with_name("sentence_miner_user_data.json")
+        self.user_data = self._get_default_user_data()
+        self.analytics_vocabulary = set()
+        self._load_user_data()
 
         self._build_ui()
         self._apply_ui_scale()
         self._refresh_anki_status(initial=True)
+        self._restore_last_session()
 
     def _build_ui(self):
         self._build_toolbar()
@@ -297,7 +303,7 @@ class PdfSentenceMinerWindow(QMainWindow):
             return
         self._load_pdf(path)
 
-    def _load_pdf(self, path):
+    def _load_pdf(self, path, initial_page_index=0):
         try:
             self.doc = fitz.open(path)
         except Exception as exc:
@@ -305,11 +311,16 @@ class PdfSentenceMinerWindow(QMainWindow):
             return
 
         self.current_pdf_path = path
-        self.current_page_index = 0
+        if self.doc and self.doc.page_count > 0:
+            self.current_page_index = max(0, min(initial_page_index, self.doc.page_count - 1))
+        else:
+            self.current_page_index = 0
         if self.doc and self.doc.page_count > 0:
             self.page_input.setValidator(QIntValidator(1, self.doc.page_count, self))
         self._clear_selection_state()
         self._render_current_page()
+        self._reset_scroll_to_top()
+        self._persist_last_session()
         self._set_status(f"Opened {os.path.basename(path)}")
 
     def _render_current_page(self):
@@ -371,6 +382,8 @@ class PdfSentenceMinerWindow(QMainWindow):
         self.current_page_index -= 1
         self._clear_selection_state()
         self._render_current_page()
+        self._reset_scroll_to_top()
+        self._persist_last_session()
 
     def _next_page(self):
         if not self.doc or self.current_page_index >= self.doc.page_count - 1:
@@ -378,6 +391,8 @@ class PdfSentenceMinerWindow(QMainWindow):
         self.current_page_index += 1
         self._clear_selection_state()
         self._render_current_page()
+        self._reset_scroll_to_top()
+        self._persist_last_session()
 
     def _zoom_in(self):
         if not self.doc:
@@ -422,6 +437,8 @@ class PdfSentenceMinerWindow(QMainWindow):
         self.current_page_index = requested_page - 1
         self._clear_selection_state()
         self._render_current_page()
+        self._reset_scroll_to_top()
+        self._persist_last_session()
 
     def _apply_ui_scale(self):
         scaled_font = QFont(self.base_font)
@@ -677,6 +694,7 @@ class PdfSentenceMinerWindow(QMainWindow):
 
         try:
             note_id = add_anki_card(sentence_for_note, self.selected_word, self.selected_translation)
+            self._record_successful_card_add(self.selected_word, self.selected_sentence or self.selected_word)
             self._set_status(f"Added card to Anki (Note ID: {note_id})")
         except Exception as exc:
             QMessageBox.critical(self, "Anki Add Failed", str(exc))
@@ -745,6 +763,7 @@ class PdfSentenceMinerWindow(QMainWindow):
             try:
                 add_anki_card(sentence_for_note, entry["word"], entry["translation"])
                 successful_entries.append(entry)
+                self._record_successful_card_add(entry["word"], entry["sentence"])
             except Exception:
                 failed_entries.append(entry)
 
@@ -763,6 +782,107 @@ class PdfSentenceMinerWindow(QMainWindow):
             ),
         )
         self._set_status("Queue processing complete")
+
+    def _get_default_user_data(self):
+        return {
+            "version": 1,
+            "last_session": {
+                "pdf_path": "",
+                "page_index": 0,
+            },
+            "analytics": {
+                "cards_added_total": 0,
+                "total_unique_vocabulary": 0,
+                "total_words_read": 0,
+                "vocabulary_seen": [],
+            },
+        }
+
+    def _load_user_data(self):
+        self.user_data = self._get_default_user_data()
+
+        if self.user_data_path.exists():
+            try:
+                loaded = json.loads(self.user_data_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    self.user_data.update(loaded)
+            except Exception:
+                pass
+
+        last_session = self.user_data.get("last_session")
+        if not isinstance(last_session, dict):
+            last_session = {}
+        analytics = self.user_data.get("analytics")
+        if not isinstance(analytics, dict):
+            analytics = {}
+
+        self.user_data["last_session"] = {
+            "pdf_path": str(last_session.get("pdf_path") or ""),
+            "page_index": int(last_session.get("page_index") or 0),
+        }
+
+        raw_vocab = analytics.get("vocabulary_seen", [])
+        if not isinstance(raw_vocab, list):
+            raw_vocab = []
+        self.analytics_vocabulary = {str(item) for item in raw_vocab if str(item).strip()}
+
+        self.user_data["analytics"] = {
+            "cards_added_total": int(analytics.get("cards_added_total") or 0),
+            "total_unique_vocabulary": len(self.analytics_vocabulary),
+            "total_words_read": int(analytics.get("total_words_read") or 0),
+            "vocabulary_seen": sorted(self.analytics_vocabulary),
+        }
+
+    def _save_user_data(self):
+        self.user_data["analytics"]["total_unique_vocabulary"] = len(self.analytics_vocabulary)
+        self.user_data["analytics"]["vocabulary_seen"] = sorted(self.analytics_vocabulary)
+
+        temp_path = self.user_data_path.with_suffix(".tmp")
+        payload = json.dumps(self.user_data, ensure_ascii=False, indent=2)
+        temp_path.write_text(payload, encoding="utf-8")
+        os.replace(temp_path, self.user_data_path)
+
+    def _persist_last_session(self):
+        if not self.current_pdf_path:
+            return
+
+        self.user_data["last_session"] = {
+            "pdf_path": self.current_pdf_path,
+            "page_index": int(self.current_page_index),
+        }
+        self._save_user_data()
+
+    def _restore_last_session(self):
+        last_session = self.user_data.get("last_session", {})
+        pdf_path = str(last_session.get("pdf_path") or "")
+        page_index = int(last_session.get("page_index") or 0)
+
+        if not pdf_path:
+            return
+
+        if not Path(pdf_path).exists():
+            return
+
+        self._load_pdf(pdf_path, initial_page_index=page_index)
+
+    def _count_words(self, text):
+        return len(re.findall(r"\b\w+\b", text or "", flags=re.UNICODE))
+
+    def _extract_vocab_tokens(self, text):
+        return {token.lower() for token in re.findall(r"\b\w+\b", text or "", flags=re.UNICODE)}
+
+    def _record_successful_card_add(self, word_text, context_text):
+        analytics = self.user_data["analytics"]
+        analytics["cards_added_total"] += 1
+        analytics["total_words_read"] += self._count_words(context_text)
+        self.analytics_vocabulary.update(self._extract_vocab_tokens(word_text))
+        analytics["total_unique_vocabulary"] = len(self.analytics_vocabulary)
+        analytics["vocabulary_seen"] = sorted(self.analytics_vocabulary)
+        self._save_user_data()
+
+    def _reset_scroll_to_top(self):
+        if self.scroll_area and self.scroll_area.verticalScrollBar():
+            self.scroll_area.verticalScrollBar().setValue(0)
 
 
 def main():
