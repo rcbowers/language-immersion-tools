@@ -8,6 +8,8 @@ import os
 import re
 import subprocess
 import sys
+import asyncio
+import inspect
 from pathlib import Path
 
 import fitz
@@ -62,21 +64,40 @@ class TranslateSignals(QObject):
 
 
 class TranslateTask(QRunnable):
-    def __init__(self, request_id, translator, text, src_lang, dest_lang):
+    def __init__(self, request_id, text, src_lang, dest_lang):
         super().__init__()
         self.signals = TranslateSignals()
         self.request_id = request_id
-        self.translator = translator
         self.text = text
         self.src_lang = src_lang
         self.dest_lang = dest_lang
 
     def run(self):
         try:
-            result = self.translator.translate(self.text, src=self.src_lang, dest=self.dest_lang)
-            self.signals.finished.emit(self.request_id, self.text, result.text)
+            translated_text = self._translate_text()
+            self.signals.finished.emit(self.request_id, self.text, translated_text)
         except Exception as exc:
             self.signals.failed.emit(self.request_id, str(exc))
+
+    async def _translate_async(self):
+        async with Translator() as translator:
+            result = await translator.translate(self.text, src=self.src_lang, dest=self.dest_lang)
+            return self._extract_translation_text(result)
+
+    def _translate_text(self):
+        if inspect.iscoroutinefunction(Translator.translate):
+            return asyncio.run(self._translate_async())
+
+        result = Translator().translate(self.text, src=self.src_lang, dest=self.dest_lang)
+        if inspect.isawaitable(result):
+            result = asyncio.run(result)
+        return self._extract_translation_text(result)
+
+    def _extract_translation_text(self, result):
+        translated_text = getattr(result, "text", None)
+        if translated_text is None:
+            raise RuntimeError(f"Unexpected translation result type: {type(result).__name__}")
+        return translated_text
 
 
 class PdfSentenceMinerWindow(QMainWindow):
@@ -85,7 +106,6 @@ class PdfSentenceMinerWindow(QMainWindow):
         self.setWindowTitle("Spanish PDF Sentence Miner")
         self.resize(1500, 950)
 
-        self.translator = Translator()
         self.translation_cache = {}
         self.thread_pool = QThreadPool.globalInstance()
         self.current_request_id = 0
@@ -558,7 +578,7 @@ class PdfSentenceMinerWindow(QMainWindow):
         self.current_request_id += 1
         request_id = self.current_request_id
 
-        task = TranslateTask(request_id, self.translator, text, "es", "en")
+        task = TranslateTask(request_id, text, "es", "en")
         task.signals.finished.connect(self._on_translation_done)
         task.signals.failed.connect(self._on_translation_failed)
         self.thread_pool.start(task)
