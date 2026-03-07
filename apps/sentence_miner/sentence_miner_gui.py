@@ -6,6 +6,7 @@ PySide6 + PyMuPDF application for click-to-translate word mining from PDFs.
 
 import os
 import re
+import socket
 import subprocess
 import sys
 import asyncio
@@ -36,6 +37,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from translation_backends import OnlineTranslationBackend, OfflineTranslationBackend
+
 from spanish_sentence_miner import (
     INPUT_FILE,
     PROCESSED_FILE,
@@ -65,40 +68,21 @@ class TranslateSignals(QObject):
 
 
 class TranslateTask(QRunnable):
-    def __init__(self, request_id, text, src_lang, dest_lang):
+    def __init__(self, request_id, text, src_lang, dest_lang, backend):
         super().__init__()
         self.signals = TranslateSignals()
         self.request_id = request_id
         self.text = text
         self.src_lang = src_lang
         self.dest_lang = dest_lang
+        self.backend = backend
 
     def run(self):
         try:
-            translated_text = self._translate_text()
+            translated_text = self.backend.translate(self.text, self.src_lang, self.dest_lang)
             self.signals.finished.emit(self.request_id, self.text, translated_text)
         except Exception as exc:
             self.signals.failed.emit(self.request_id, str(exc))
-
-    async def _translate_async(self):
-        async with Translator() as translator:
-            result = await translator.translate(self.text, src=self.src_lang, dest=self.dest_lang)
-            return self._extract_translation_text(result)
-
-    def _translate_text(self):
-        if inspect.iscoroutinefunction(Translator.translate):
-            return asyncio.run(self._translate_async())
-
-        result = Translator().translate(self.text, src=self.src_lang, dest=self.dest_lang)
-        if inspect.isawaitable(result):
-            result = asyncio.run(result)
-        return self._extract_translation_text(result)
-
-    def _extract_translation_text(self, result):
-        translated_text = getattr(result, "text", None)
-        if translated_text is None:
-            raise RuntimeError(f"Unexpected translation result type: {type(result).__name__}")
-        return translated_text
 
 
 class PdfSentenceMinerWindow(QMainWindow):
@@ -139,8 +123,16 @@ class PdfSentenceMinerWindow(QMainWindow):
         self.analytics_vocabulary = set()
         self._load_user_data()
 
+        # Translation backend state
+        self.translation_mode = "online"  # or "offline"
+        self.internet_available = True
+        self.online_backend = None
+        self.offline_backend = None  # Lazy loaded
+        self.translation_status_label = None
+
         self._build_ui()
         self._apply_ui_scale()
+        self._determine_translation_mode()
         self._refresh_anki_status(initial=True)
         self._restore_last_session()
 
@@ -175,6 +167,8 @@ class PdfSentenceMinerWindow(QMainWindow):
 
         status = QStatusBar()
         self.setStatusBar(status)
+        self.translation_status_label = QLabel("Translation: checking...")
+        status.addPermanentWidget(self.translation_status_label)
         self.anki_status_label = QLabel("Anki: checking...")
         status.addPermanentWidget(self.anki_status_label)
 
@@ -241,6 +235,11 @@ class PdfSentenceMinerWindow(QMainWindow):
         refresh_anki_action = QAction("Check Anki", self)
         refresh_anki_action.triggered.connect(self._refresh_anki_status)
         toolbar.addAction(refresh_anki_action)
+
+        toolbar.addSeparator()
+        self.toggle_translation_button = QPushButton("Translation Mode")
+        self.toggle_translation_button.clicked.connect(self._toggle_translation_mode)
+        toolbar.addWidget(self.toggle_translation_button)
 
     def _build_right_panel(self):
         panel = QWidget()
@@ -584,6 +583,32 @@ class PdfSentenceMinerWindow(QMainWindow):
 
         return "\n".join(lines)
 
+    def _get_translation_backend(self):
+        """
+        Get the appropriate translation backend based on current mode.
+        Lazy-loads backends on first use.
+        """
+        if self.translation_mode == "online":
+            if self.online_backend is None:
+                self.online_backend = OnlineTranslationBackend()
+
+            if not self.online_backend.is_available():
+                raise RuntimeError("Online backend (googletrans) is not available. Install with: pip install googletrans==4.0.0-rc1")
+
+            return self.online_backend
+
+        elif self.translation_mode == "offline":
+            if self.offline_backend is None:
+                self.offline_backend = OfflineTranslationBackend()
+
+            if not self.offline_backend.is_available():
+                raise RuntimeError("Offline backend (argostranslate) is not available. Install with: pip install argostranslate")
+
+            return self.offline_backend
+
+        else:
+            raise RuntimeError(f"Unknown translation mode: {self.translation_mode}")
+
     def _request_translation(self, text):
         key = ("es", "en", text)
         if key in self.translation_cache:
@@ -595,7 +620,20 @@ class PdfSentenceMinerWindow(QMainWindow):
         self.current_request_id += 1
         request_id = self.current_request_id
 
-        task = TranslateTask(request_id, text, "es", "en")
+        try:
+            backend = self._get_translation_backend()
+        except RuntimeError as e:
+            self.selected_translation = f"Translation error: {str(e)}"
+            self._update_selection_panel()
+            self._update_action_buttons()
+            return
+
+        # Show loading message for offline mode (first use may download models)
+        if self.translation_mode == "offline" and self.offline_backend and not self.offline_backend._initialized:
+            self._update_translation_status_label("Downloading models (~120MB)...")
+            self._set_status("First offline translation: downloading models (this may take a minute)...", 10000)
+
+        task = TranslateTask(request_id, text, "es", "en", backend)
         task.signals.finished.connect(self._on_translation_done)
         task.signals.failed.connect(self._on_translation_failed)
         self.thread_pool.start(task)
@@ -610,13 +648,49 @@ class PdfSentenceMinerWindow(QMainWindow):
         self._update_selection_panel()
         self._update_action_buttons()
 
+        # Restore status label if it was showing download message
+        if self.translation_mode == "offline" and self.offline_backend and self.offline_backend.models_were_downloaded():
+            self._update_translation_status_label()
+            self._set_status("Offline models downloaded successfully", 3000)
+        else:
+            self._update_translation_status_label()
+
     def _on_translation_failed(self, request_id, error_message):
         if request_id != self.current_request_id:
             return
 
+        # Try automatic fallback to offline mode if online translation failed
+        if self.translation_mode == "online":
+            offline_backend = OfflineTranslationBackend()
+            if offline_backend.is_available():
+                self._set_status("Online translation failed, trying offline mode...", 3000)
+                self.translation_mode = "offline"
+                self._update_translation_status_label()
+                # Retry translation with offline backend
+                self._request_translation(self.selected_word)
+                return
+
+        # Try fallback to online mode if offline translation failed
+        elif self.translation_mode == "offline":
+            online_backend = OnlineTranslationBackend()
+            if online_backend.is_available() and self._check_internet_connection():
+                self._set_status("Offline translation failed, trying online mode...", 3000)
+                self.translation_mode = "online"
+                self._update_translation_status_label()
+                # Retry translation with online backend
+                self._request_translation(self.selected_word)
+                return
+
+        # Both backends failed or no alternative available
         self.selected_translation = f"Translation error: {error_message}"
         self._update_selection_panel()
         self._update_action_buttons()
+
+        # Show helpful error message
+        if "argostranslate" in error_message.lower() or "not installed" in error_message.lower():
+            self._set_status("Translation failed. Check backend availability.", 4000)
+        else:
+            self._set_status(f"Translation failed: {error_message}", 4000)
 
     def _update_selection_panel(self):
         self.word_value.setText(self.selected_word or "(none)")
@@ -641,6 +715,106 @@ class PdfSentenceMinerWindow(QMainWindow):
             self.anki_status_label.setText("Anki: not connected")
             if not initial:
                 self._set_status("Could not reach AnkiConnect", 3000)
+
+    def _check_internet_connection(self) -> bool:
+        """
+        Check internet connectivity by attempting to connect to Google DNS.
+        Uses a 2-second timeout to avoid blocking startup.
+        """
+        try:
+            socket.create_connection(("8.8.8.8", 53), timeout=2)
+            return True
+        except OSError:
+            return False
+
+    def _determine_translation_mode(self):
+        """
+        Determine which translation mode to use on startup.
+        Auto-selects online if internet available, offline if not.
+        Falls back to online mode if offline backend not installed.
+        """
+        self.internet_available = self._check_internet_connection()
+
+        # Try online mode first if internet available
+        if self.internet_available:
+            online_backend = OnlineTranslationBackend()
+            if online_backend.is_available():
+                self.translation_mode = "online"
+                self._update_translation_status_label()
+                return
+
+        # Fall back to offline mode if available
+        offline_backend = OfflineTranslationBackend()
+        if offline_backend.is_available():
+            self.translation_mode = "offline"
+            self._update_translation_status_label()
+            return
+
+        # Default to online (will fail if no internet)
+        self.translation_mode = "online"
+        self._update_translation_status_label()
+
+    def _update_translation_status_label(self, message=None):
+        """
+        Update the translation status label in the status bar.
+        Shows current mode and status with color coding.
+        """
+        if not self.translation_status_label:
+            return
+
+        if message:
+            # Custom message (e.g., "Loading models...")
+            self.translation_status_label.setText(f"Translation: {message}")
+            self.translation_status_label.setStyleSheet("color: orange;")
+        elif self.translation_mode == "online":
+            self.translation_status_label.setText("Translation: Online \u2713")
+            self.translation_status_label.setStyleSheet("color: green;")
+        elif self.translation_mode == "offline":
+            self.translation_status_label.setText("Translation: Offline \u2713")
+            self.translation_status_label.setStyleSheet("color: blue;")
+        else:
+            self.translation_status_label.setText("Translation: Error")
+            self.translation_status_label.setStyleSheet("color: red;")
+
+    def _toggle_translation_mode(self):
+        """
+        Toggle between online and offline translation modes.
+        Shows error if offline backend not installed.
+        """
+        if self.translation_mode == "online":
+            # Try switching to offline
+            offline_backend = OfflineTranslationBackend()
+            if not offline_backend.is_available():
+                QMessageBox.information(
+                    self,
+                    "Offline Translation Not Available",
+                    "Offline translation requires argostranslate.\n\n"
+                    "Install with:\n"
+                    "pip install argostranslate\n\n"
+                    "After installing, restart the application."
+                )
+                return
+
+            self.translation_mode = "offline"
+            self._update_translation_status_label()
+            self._set_status("Switched to offline translation mode", 2000)
+
+        else:
+            # Switch to online
+            online_backend = OnlineTranslationBackend()
+            if not online_backend.is_available():
+                QMessageBox.warning(
+                    self,
+                    "Online Translation Not Available",
+                    "Online translation requires googletrans.\n\n"
+                    "Install with:\n"
+                    "pip install googletrans==4.0.0-rc1"
+                )
+                return
+
+            self.translation_mode = "online"
+            self._update_translation_status_label()
+            self._set_status("Switched to online translation mode", 2000)
 
     def _start_anki(self):
         if self._is_anki_running_process():
