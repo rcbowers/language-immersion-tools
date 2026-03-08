@@ -129,6 +129,7 @@ class PdfSentenceMinerWindow(QMainWindow):
         self.online_backend = None
         self.offline_backend = None  # Lazy loaded
         self.translation_status_label = None
+        self.mode_indicator_label = None
 
         self._build_ui()
         self._apply_ui_scale()
@@ -287,6 +288,14 @@ class PdfSentenceMinerWindow(QMainWindow):
         self.queue_info = QLabel(f"Queue file: {INPUT_FILE}")
         self.queue_info.setWordWrap(True)
         layout.addWidget(self.queue_info)
+
+        # Translation mode indicator (more prominent)
+        self.mode_indicator_label = QLabel("Translation Mode: Checking...")
+        self.mode_indicator_label.setWordWrap(True)
+        font = self.mode_indicator_label.font()
+        font.setBold(True)
+        self.mode_indicator_label.setFont(font)
+        layout.addWidget(self.mode_indicator_label)
 
         layout.addStretch(1)
         self._update_action_buttons()
@@ -638,8 +647,52 @@ class PdfSentenceMinerWindow(QMainWindow):
         task.signals.failed.connect(self._on_translation_failed)
         self.thread_pool.start(task)
 
+    def _is_garbage_translation(self, text):
+        """
+        Detect garbage translations from googletrans (common issue).
+        Returns True if translation appears to be garbage.
+        """
+        if not text or len(text) < 10:
+            return False
+
+        # Check for repeated patterns (like "mainstreammainstreammainstream...")
+        # Split into words and check if the same word repeats excessively
+        words = text.lower().split()
+        if len(words) > 5:
+            # Count most common word
+            from collections import Counter
+            word_counts = Counter(words)
+            most_common_word, count = word_counts.most_common(1)[0]
+            # If the most common word appears more than 50% of the time, it's likely garbage
+            if count > len(words) * 0.5:
+                return True
+
+        # Check for character-level repetition
+        if len(text) > 20:
+            # Look for repeated substrings
+            for pattern_len in range(5, min(15, len(text) // 3)):
+                pattern = text[:pattern_len]
+                # Count how many times this pattern repeats at the start
+                repeats = 0
+                pos = 0
+                while pos + pattern_len <= len(text) and text[pos:pos+pattern_len] == pattern:
+                    repeats += 1
+                    pos += pattern_len
+                # If pattern repeats more than 3 times, it's garbage
+                if repeats > 3:
+                    return True
+
+        return False
+
     def _on_translation_done(self, request_id, source_text, translated_text):
         if request_id != self.current_request_id:
+            return
+
+        # Check for garbage translation (common googletrans issue)
+        if self._is_garbage_translation(translated_text):
+            print(f"[WARNING] Detected garbage translation: {translated_text[:100]}")
+            # Treat as translation failure to trigger fallback
+            self._on_translation_failed(request_id, "Google Translate returned invalid response (rate limited or blocked)")
             return
 
         key = ("es", "en", source_text)
@@ -759,62 +812,104 @@ class PdfSentenceMinerWindow(QMainWindow):
         Update the translation status label in the status bar.
         Shows current mode and status with color coding.
         """
-        if not self.translation_status_label:
-            return
-
         if message:
             # Custom message (e.g., "Loading models...")
-            self.translation_status_label.setText(f"Translation: {message}")
-            self.translation_status_label.setStyleSheet("color: orange;")
+            if self.translation_status_label:
+                self.translation_status_label.setText(f"Translation: {message}")
+                self.translation_status_label.setStyleSheet("color: orange;")
+            if self.mode_indicator_label:
+                self.mode_indicator_label.setText(f"Translation Mode: {message}")
+                self.mode_indicator_label.setStyleSheet("color: orange;")
         elif self.translation_mode == "online":
-            self.translation_status_label.setText("Translation: Online \u2713")
-            self.translation_status_label.setStyleSheet("color: green;")
+            if self.translation_status_label:
+                self.translation_status_label.setText("Translation: Online \u2713")
+                self.translation_status_label.setStyleSheet("color: green;")
+            if self.mode_indicator_label:
+                self.mode_indicator_label.setText("Translation Mode: ONLINE \u2713")
+                self.mode_indicator_label.setStyleSheet("color: green;")
         elif self.translation_mode == "offline":
-            self.translation_status_label.setText("Translation: Offline \u2713")
-            self.translation_status_label.setStyleSheet("color: blue;")
+            if self.translation_status_label:
+                self.translation_status_label.setText("Translation: Offline \u2713")
+                self.translation_status_label.setStyleSheet("color: blue;")
+            if self.mode_indicator_label:
+                self.mode_indicator_label.setText("Translation Mode: OFFLINE \u2713")
+                self.mode_indicator_label.setStyleSheet("color: blue;")
         else:
-            self.translation_status_label.setText("Translation: Error")
-            self.translation_status_label.setStyleSheet("color: red;")
+            if self.translation_status_label:
+                self.translation_status_label.setText("Translation: Error")
+                self.translation_status_label.setStyleSheet("color: red;")
+            if self.mode_indicator_label:
+                self.mode_indicator_label.setText("Translation Mode: ERROR")
+                self.mode_indicator_label.setStyleSheet("color: red;")
 
     def _toggle_translation_mode(self):
         """
         Toggle between online and offline translation modes.
         Shows error if offline backend not installed.
         """
-        if self.translation_mode == "online":
-            # Try switching to offline
-            offline_backend = OfflineTranslationBackend()
-            if not offline_backend.is_available():
-                QMessageBox.information(
-                    self,
-                    "Offline Translation Not Available",
-                    "Offline translation requires argostranslate.\n\n"
-                    "Install with:\n"
-                    "pip install argostranslate\n\n"
-                    "After installing, restart the application."
-                )
-                return
+        try:
+            if self.translation_mode == "online":
+                # Try switching to offline
+                try:
+                    offline_backend = OfflineTranslationBackend()
+                except Exception as e:
+                    QMessageBox.critical(
+                        self,
+                        "Error",
+                        f"Failed to create offline backend:\n{str(e)}"
+                    )
+                    return
 
-            self.translation_mode = "offline"
-            self._update_translation_status_label()
-            self._set_status("Switched to offline translation mode", 2000)
+                if not offline_backend.is_available():
+                    QMessageBox.information(
+                        self,
+                        "Offline Translation Not Available",
+                        "Offline translation requires argostranslate.\n\n"
+                        "Install with:\n"
+                        "pip install argostranslate\n\n"
+                        "After installing, restart the application."
+                    )
+                    return
 
-        else:
-            # Switch to online
-            online_backend = OnlineTranslationBackend()
-            if not online_backend.is_available():
-                QMessageBox.warning(
-                    self,
-                    "Online Translation Not Available",
-                    "Online translation requires googletrans.\n\n"
-                    "Install with:\n"
-                    "pip install googletrans==4.0.0-rc1"
-                )
-                return
+                self.translation_mode = "offline"
+                self._update_translation_status_label()
+                self._set_status("Switched to offline translation mode", 2000)
 
-            self.translation_mode = "online"
-            self._update_translation_status_label()
-            self._set_status("Switched to online translation mode", 2000)
+            else:
+                # Switch to online
+                try:
+                    online_backend = OnlineTranslationBackend()
+                except Exception as e:
+                    QMessageBox.critical(
+                        self,
+                        "Error",
+                        f"Failed to create online backend:\n{str(e)}"
+                    )
+                    return
+
+                if not online_backend.is_available():
+                    QMessageBox.warning(
+                        self,
+                        "Online Translation Not Available",
+                        "Online translation requires googletrans.\n\n"
+                        "Install with:\n"
+                        "pip install googletrans==4.0.0-rc1"
+                    )
+                    return
+
+                self.translation_mode = "online"
+                self._update_translation_status_label()
+                self._set_status("Switched to online translation mode", 2000)
+
+        except Exception as e:
+            print(f"[ERROR] Exception in _toggle_translation_mode: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"An error occurred while toggling translation mode:\n{str(e)}"
+            )
 
     def _start_anki(self):
         if self._is_anki_running_process():
