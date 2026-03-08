@@ -1,7 +1,5 @@
-openai-whisper
 yt-dlp
 ffmpeg-python
-spacy>=3.0.0
 googletrans==4.0.0-rc1
 psutil>=5.9.0
 PySide6>=6.7.0
@@ -10,6 +8,9 @@ PyMuPDF>=1.24.0
 # Optional: Offline translation support (sentence miner GUI)
 # Enables translation without internet connection
 argostranslate>=1.9.0
+spacy>=3.0.0 # Offline spanish translation
+
+openai-whisper # For subtitle generation
 
 # After installing requirements, download Spanish model with:
 # python -m spacy download es_core_news_sm
