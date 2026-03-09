@@ -8,7 +8,7 @@ A collection of Python tools designed to supercharge your language immersion wor
 Automatically generate accurate subtitles for YouTube videos using OpenAI's Whisper AI. Perfect for creating subtitles for content that doesn't have them, or for getting cleaner transcripts for sentence mining.
 
 ### 2. Spanish Sentence Miner (GUI)
-Interactive PySide6 + PyMuPDF GUI for mining directly from PDFs. Click a word in the reader, auto-translate it, and create Anki cards immediately or via queue.
+Interactive PySide6 GUI with dual modes for mining from **PDFs and videos**. Open content, click words in PDF text or subtitles, auto-translate, and create Anki cards immediately or via queue.
 
 ### 3. Spanish Sentence Miner (CLI)
 Batch process pre-formatted sentences from a text file and automatically create Anki flashcards via the AnkiConnect API. Words are highlighted in the context sentence for easy recognition.
@@ -101,13 +101,15 @@ python youtube_subtitle_generator.py -o "my_subtitles" "URL"
 
 ## Spanish Sentence Miner (GUI)
 
-Interactive PDF reader for creating Anki flashcards with automatic translation powered by Google Translate.
+Interactive sentence mining app with **PDF mode** and **Video mode** for creating Anki flashcards with automatic translation.
 
 ### Features
 
-- **PDF Click Mining**: Open a PDF and click words directly in-page
-- **Automatic Translation**: Selected word is translated automatically
-- **Context Capture**: Uses the clicked line as card context sentence
+- **Dual-Mode Content Mining**: Open a PDF or video from `Content > Open content` and switch modes automatically based on file type
+- **PDF Click Mining**: Click words in-page, including Shift+click range selection
+- **Video Subtitle Mining**: Click subtitle words, adjust subtitle timing offset, and mine while watching
+- **Automatic Translation**: Selected word/phrase is translated automatically
+- **Context Capture**: Uses line/subtitle text as card context sentence
 - **Quick Add + Queue**: Add immediately to Anki or stage in `words_to_process.txt`
 - **Batch Queue Processing**: Process queued entries to Anki in one pass
 - **Anki Integration**: Direct connection to Anki via AnkiConnect
@@ -131,15 +133,19 @@ python sentence_miner_gui.py
 
 ### Workflow
 
-1. **Open a PDF** in the GUI (`Ctrl+O`)
-2. **Click a target word** in the page
-   - The clicked word is highlighted
-   - The word is translated automatically
-   - Context line is captured for card front
-3. **Choose card action**
+1. **Open content** from `Content > Open content` (`Ctrl+O`)
+   - Select a `.pdf` to use PDF mode
+   - Select a video file (`.mp4`, `.mkv`, `.avi`, `.mov`, `.webm`) to use Video mode
+2. **Select target words**
+   - PDF mode: click words in the page (supports Shift+click ranges)
+   - Video mode: click subtitle words (supports Shift+click ranges within current subtitle line)
+3. **Review translation and context**
+   - Translation is fetched automatically
+   - Context sentence/subtitle is shown in the right panel
+4. **Choose card action**
    - `Add Now`: creates the card in Anki immediately
    - `Add to Queue`: appends sentence/word/translation to `words_to_process.txt`
-4. **Click `Process Queue`** to batch submit all queued entries to Anki
+5. **Click `Process Queue`** to batch submit all queued entries to Anki
 
 ### Card Format
 

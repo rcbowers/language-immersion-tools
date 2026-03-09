@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSlider,
+    QSizePolicy,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -119,6 +120,7 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         self.subtitle_label = None
         self.subtitle_parser = None
         self.current_subtitle = None
+        self.subtitle_selection_anchor = None
 
         self.current_video_path = ""
         self.current_srt_path = ""
@@ -233,13 +235,16 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
 
         self.video_widget = QVideoWidget()
         self.video_widget.setMinimumHeight(480)
+        self.video_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.video_widget, stretch=1)
 
         timeline_widget = QWidget(panel)
         timeline_widget.setFixedHeight(22)
+        timeline_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         timeline_layout = QHBoxLayout(timeline_widget)
         timeline_layout.setContentsMargins(8, 4, 8, 4)
-        self.play_pause_button = QPushButton('▶️')
+        self.play_pause_button = QPushButton("▶")
+        self.play_pause_button.setMinimumWidth(42)
         self.play_pause_button.setToolTip("Play/Pause")
         self.play_pause_button.clicked.connect(self._toggle_play_pause)
         timeline_layout.addWidget(self.play_pause_button)
@@ -272,7 +277,18 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         self.media_player.playbackStateChanged.connect(self._on_playback_state_changed)
 
         self._set_transport_enabled_state()
+        QTimer.singleShot(0, self._stabilize_video_layout)
         return panel
+
+    def _stabilize_video_layout(self):
+        if self.position_slider:
+            self.position_slider.updateGeometry()
+        if self.time_label:
+            self.time_label.updateGeometry()
+        central = self.centralWidget()
+        if central:
+            central.updateGeometry()
+            central.update()
 
     def _open_video_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open Video", "", self.SUPPORTED_VIDEO_FILTER)
@@ -467,21 +483,49 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
             self.subtitle_parser = None
             self.current_srt_path = ""
 
-    def _on_subtitle_click(self, word, modifiers):
+    def _on_subtitle_click(self, word, token_index, modifiers):
         if not self.current_subtitle:
             return
 
-        clean_word = self._clean_word(word)
-        if not clean_word:
+        tokens = self.current_subtitle.text.split()
+        if token_index < 0 or token_index >= len(tokens):
             return
 
-        self.selected_word = clean_word
+        shift_pressed = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+        selected_indices = self._resolve_selected_subtitle_indices(token_index, shift_pressed, len(tokens))
+
+        cleaned_words = []
+        for idx in selected_indices:
+            cleaned = self._clean_word(tokens[idx])
+            if cleaned:
+                cleaned_words.append(cleaned)
+
+        if not cleaned_words:
+            return
+
+        self.selected_word = " ".join(cleaned_words)
         self.selected_sentence = self.current_subtitle.text
         self.selected_translation = "Translating..."
         self._update_selection_panel()
         self._update_action_buttons()
-        self.subtitle_label.highlight_word(clean_word)
-        self._request_translation(clean_word)
+        self.subtitle_label.highlight_word_range(selected_indices[0], selected_indices[-1])
+        self._request_translation(self.selected_word)
+
+    def _resolve_selected_subtitle_indices(self, token_index, shift_pressed, token_count):
+        subtitle_index = self.current_subtitle.index if self.current_subtitle else -1
+        if (
+            not shift_pressed
+            or self.subtitle_selection_anchor is None
+            or self.subtitle_selection_anchor[0] != subtitle_index
+        ):
+            self.subtitle_selection_anchor = (subtitle_index, token_index)
+            return [token_index]
+
+        anchor_index = self.subtitle_selection_anchor[1]
+        anchor_index = max(0, min(anchor_index, token_count - 1))
+        start = min(anchor_index, token_index)
+        end = max(anchor_index, token_index)
+        return list(range(start, end + 1))
 
     def _on_position_changed(self, position):
         if not self._is_slider_dragging:
@@ -490,23 +534,27 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         duration = self.media_player.duration()
         time_text = f"{self._fmt_ms(position)} / {self._fmt_ms(duration)}"
         self.time_label.setText(time_text)
+        self._refresh_subtitle_for_position(position)
 
+    def _refresh_subtitle_for_position(self, position):
         if not self.subtitle_parser:
             self.current_subtitle = None
+            self.subtitle_selection_anchor = None
             self.subtitle_label.set_subtitle_text("")
             self.subtitle_label.show()
             return
-
         lookup_position = max(0, position - self.subtitle_offset_ms)
         subtitle = self.subtitle_parser.get_subtitle_at_time(lookup_position)
         if subtitle is None:
             self.current_subtitle = None
+            self.subtitle_selection_anchor = None
             self.subtitle_label.set_subtitle_text("")
             self.subtitle_label.show()
             return
 
         if self.current_subtitle is None or subtitle.index != self.current_subtitle.index:
             self.current_subtitle = subtitle
+            self.subtitle_selection_anchor = None
             self.subtitle_label.set_subtitle_text(subtitle.text)
             self.subtitle_label.show()
 
@@ -522,7 +570,7 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         if not self.media_player:
             return
         is_playing = self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-        icon_text = "⏸️" if is_playing else "▶️"
+        icon_text = "⏸" if is_playing else "▶"
         if self.play_pause_button:
             self.play_pause_button.setText(icon_text)
         if self.play_pause_toolbar_action:
@@ -545,6 +593,7 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         if self.subtitle_offset_label:
             self.subtitle_offset_label.setText(f"Offset: {seconds:+.2f}s")
         self._set_status(f"Subtitle timing offset: {seconds:+.2f}s", 1500)
+        self._refresh_subtitle_for_position(self.media_player.position())
 
     def _on_slider_pressed(self):
         self._is_slider_dragging = True
@@ -600,6 +649,7 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
     def _clear_viewer_state(self):
         self._clear_selection_state()
         self.current_subtitle = None
+        self.subtitle_selection_anchor = None
         if self.subtitle_label:
             self.subtitle_label.set_subtitle_text("")
             self.subtitle_label.show()
