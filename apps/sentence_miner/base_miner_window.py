@@ -6,11 +6,12 @@ import os
 import re
 import socket
 import subprocess
+import sys
 from abc import abstractmethod
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QAction, QFont, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QFormLayout,
@@ -30,6 +31,16 @@ from PySide6.QtWidgets import (
 )
 
 from translation_backends import OnlineTranslationBackend, OfflineTranslationBackend
+from language_config import (
+    DEFAULT_LEARNING_LANGUAGE,
+    DEFAULT_NATIVE_LANGUAGE,
+    get_argos_language_code,
+    get_google_language_code,
+    get_language_label,
+    get_whisper_language_code,
+    list_language_codes,
+    normalize_language_code,
+)
 from spanish_sentence_miner import (
     INPUT_FILE,
     PROCESSED_FILE,
@@ -91,6 +102,77 @@ class AnkiStatusTask(QRunnable):
             return
 
 
+class ArgosSetupSignals(QObject):
+    finished = Signal(int, bool, str)
+
+
+class ArgosSetupTask(QRunnable):
+    def __init__(self, request_id, src_lang, dest_lang):
+        super().__init__()
+        self.request_id = request_id
+        self.src_lang = src_lang
+        self.dest_lang = dest_lang
+        self.signals = ArgosSetupSignals()
+
+    def run(self):
+        try:
+            if self.src_lang == self.dest_lang:
+                self._emit(True, "Offline translation ready (same language pair).")
+                return
+
+            argos_package = self._ensure_argostranslate()
+            argos_package.update_package_index()
+
+            available = argos_package.get_available_packages()
+            package_to_install = None
+            for pkg in available:
+                if pkg.from_code == self.src_lang and pkg.to_code == self.dest_lang:
+                    package_to_install = pkg
+                    break
+
+            if package_to_install is None:
+                self._emit(False, f"No offline model available for {self.src_lang} -> {self.dest_lang}.")
+                return
+
+            installed = argos_package.get_installed_packages()
+            already_installed = any(
+                p.from_code == self.src_lang and p.to_code == self.dest_lang for p in installed
+            )
+            if already_installed:
+                self._emit(True, f"Offline model ready for {self.src_lang} -> {self.dest_lang}.")
+                return
+
+            download_path = package_to_install.download()
+            argos_package.install_from_path(download_path)
+            self._emit(True, f"Installed offline model for {self.src_lang} -> {self.dest_lang}.")
+        except Exception as exc:
+            self._emit(False, str(exc))
+
+    def _ensure_argostranslate(self):
+        try:
+            import argostranslate.package as argos_package
+            return argos_package
+        except ImportError:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "argostranslate"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "").strip()
+                raise RuntimeError(f"Failed to install argostranslate. {detail}")
+
+            import argostranslate.package as argos_package
+            return argos_package
+
+    def _emit(self, success, message):
+        try:
+            self.signals.finished.emit(self.request_id, success, message)
+        except RuntimeError:
+            return
+
+
 class AbstractSentenceMinerWindow(QMainWindow):
     def __init__(self, title):
         super().__init__()
@@ -98,9 +180,11 @@ class AbstractSentenceMinerWindow(QMainWindow):
         self.resize(1500, 950)
 
         self.translation_cache = {}
+        self._translation_cache_keys_by_request = {}
         self.thread_pool = QThreadPool.globalInstance()
         self.current_request_id = 0
         self.anki_check_request_id = 0
+        self.argos_setup_request_id = 0
 
         self.selected_word = ""
         self.selected_sentence = ""
@@ -121,6 +205,8 @@ class AbstractSentenceMinerWindow(QMainWindow):
 
         self.translation_mode = "online"
         self.internet_available = True
+        self.learning_language = DEFAULT_LEARNING_LANGUAGE
+        self.native_language = DEFAULT_NATIVE_LANGUAGE
         self.translation_status_label = None
         self.mode_indicator_label = None
 
@@ -133,6 +219,7 @@ class AbstractSentenceMinerWindow(QMainWindow):
         self._determine_translation_mode()
         self._refresh_anki_status(initial=True)
         self._restore_common_preferences()
+        self._prepare_offline_translation_async(triggered_by_user=False)
         self._restore_session_state()
 
     def _build_base_ui(self):
@@ -275,6 +362,29 @@ class AbstractSentenceMinerWindow(QMainWindow):
 
         translation_menu = QMenu("Translation", self)
         self._add_menu_action(translation_menu, "Translation mode", self._toggle_translation_mode)
+
+        learning_menu = translation_menu.addMenu("Learning language")
+        learning_group = QActionGroup(self)
+        learning_group.setExclusive(True)
+        for code in list_language_codes():
+            action = QAction(get_language_label(code), self)
+            action.setCheckable(True)
+            action.setChecked(code == self.learning_language)
+            action.triggered.connect(lambda checked=False, lang_code=code: self._set_learning_language(lang_code))
+            learning_group.addAction(action)
+            learning_menu.addAction(action)
+
+        native_menu = translation_menu.addMenu("Native language")
+        native_group = QActionGroup(self)
+        native_group.setExclusive(True)
+        for code in list_language_codes():
+            action = QAction(get_language_label(code), self)
+            action.setCheckable(True)
+            action.setChecked(code == self.native_language)
+            action.triggered.connect(lambda checked=False, lang_code=code: self._set_native_language(lang_code))
+            native_group.addAction(action)
+            native_menu.addAction(action)
+
         self._add_toolbar_menu_button(toolbar, "Translation", translation_menu)
 
     def _apply_ui_scale(self):
@@ -316,11 +426,81 @@ class AbstractSentenceMinerWindow(QMainWindow):
 
         return value[start:end].strip()
 
+    def _set_learning_language(self, code):
+        normalized = normalize_language_code(code, DEFAULT_LEARNING_LANGUAGE)
+        if normalized == self.learning_language:
+            return
+        self.learning_language = normalized
+        self.translation_cache.clear()
+        self.user_data.setdefault("preferences", {})["learning_language"] = normalized
+        self._save_user_data()
+        self._set_status(
+            f"Learning language: {get_language_label(self.learning_language)}",
+            2000,
+        )
+        self._prepare_offline_translation_async(triggered_by_user=True)
+
+    def _set_native_language(self, code):
+        normalized = normalize_language_code(code, DEFAULT_NATIVE_LANGUAGE)
+        if normalized == self.native_language:
+            return
+        self.native_language = normalized
+        self.translation_cache.clear()
+        self.user_data.setdefault("preferences", {})["native_language"] = normalized
+        self._save_user_data()
+        self._set_status(
+            f"Native language: {get_language_label(self.native_language)}",
+            2000,
+        )
+        self._prepare_offline_translation_async(triggered_by_user=True)
+
+    def _prepare_offline_translation_async(self, triggered_by_user):
+        src = get_argos_language_code(self.learning_language)
+        dest = get_argos_language_code(self.native_language)
+        self.argos_setup_request_id += 1
+        request_id = self.argos_setup_request_id
+
+        task = ArgosSetupTask(request_id, src, dest)
+        task.signals.finished.connect(
+            lambda rid, success, message: self._on_argos_setup_finished(
+                rid, success, message, triggered_by_user
+            )
+        )
+        self.thread_pool.start(task)
+
+    def _on_argos_setup_finished(self, request_id, success, message, triggered_by_user):
+        if request_id != self.argos_setup_request_id:
+            return
+        if success:
+            if triggered_by_user:
+                self._set_status(message, 3000)
+            if self.translation_mode == "online" and not OnlineTranslationBackend().is_available():
+                self.translation_mode = "offline"
+                self._update_translation_status_label()
+            return
+
+        if triggered_by_user:
+            self._set_status(f"Offline model setup skipped: {message}", 4000)
+
+    def _get_translation_language_codes(self):
+        if self.translation_mode == "offline":
+            return (
+                get_argos_language_code(self.learning_language),
+                get_argos_language_code(self.native_language),
+            )
+        return (
+            get_google_language_code(self.learning_language),
+            get_google_language_code(self.native_language),
+        )
+
+    def _get_whisper_learning_language(self):
+        return get_whisper_language_code(self.learning_language)
+
     def _request_translation(self, text):
         if not text:
             return
 
-        key = ("es", "en", text)
+        key = (self.learning_language, self.native_language, text)
         if key in self.translation_cache:
             self.selected_translation = self.translation_cache[key]
             self._update_selection_panel()
@@ -334,8 +514,10 @@ class AbstractSentenceMinerWindow(QMainWindow):
         self._update_action_buttons()
 
         backend = OnlineTranslationBackend() if self.translation_mode == "online" else OfflineTranslationBackend()
+        src_lang, dest_lang = self._get_translation_language_codes()
 
-        task = TranslateTask(request_id, text, "es", "en", backend)
+        task = TranslateTask(request_id, text, src_lang, dest_lang, backend)
+        self._translation_cache_keys_by_request[request_id] = key
         task.signals.finished.connect(self._on_translation_done)
         task.signals.failed.connect(self._on_translation_failed)
         self.thread_pool.start(task)
@@ -366,7 +548,9 @@ class AbstractSentenceMinerWindow(QMainWindow):
             self._on_translation_failed(request_id, "Google Translate returned invalid response")
             return
 
-        key = ("es", "en", source_text)
+        key = self._translation_cache_keys_by_request.pop(
+            request_id, (self.learning_language, self.native_language, source_text)
+        )
         self.translation_cache[key] = translated_text
         self.selected_translation = translated_text
         self._update_selection_panel()
@@ -376,6 +560,7 @@ class AbstractSentenceMinerWindow(QMainWindow):
     def _on_translation_failed(self, request_id, error_message):
         if request_id != self.current_request_id:
             return
+        self._translation_cache_keys_by_request.pop(request_id, None)
 
         if self.translation_mode == "online":
             offline_backend = OfflineTranslationBackend()
@@ -475,7 +660,8 @@ class AbstractSentenceMinerWindow(QMainWindow):
     def _toggle_translation_mode(self):
         if self.translation_mode == "online":
             if not OfflineTranslationBackend().is_available():
-                QMessageBox.information(self, "Offline Translation Not Available", "Install argostranslate for offline mode.")
+                self._set_status("Preparing offline translation in background...", 3000)
+                self._prepare_offline_translation_async(triggered_by_user=True)
                 return
             self.translation_mode = "offline"
             self._set_status("Switched to offline translation mode", 2000)
@@ -629,6 +815,8 @@ class AbstractSentenceMinerWindow(QMainWindow):
                 "preferred_mode": None,
                 "video_playback_speed": 1.0,
                 "ui_scale": 1.0,
+                "learning_language": DEFAULT_LEARNING_LANGUAGE,
+                "native_language": DEFAULT_NATIVE_LANGUAGE,
             },
             "last_session": {
                 "pdf_path": "",
@@ -672,7 +860,15 @@ class AbstractSentenceMinerWindow(QMainWindow):
             "preferred_mode": preferences.get("preferred_mode"),
             "video_playback_speed": float(preferences.get("video_playback_speed") or 1.0),
             "ui_scale": float(preferences.get("ui_scale") or 1.0),
+            "learning_language": normalize_language_code(
+                preferences.get("learning_language"), DEFAULT_LEARNING_LANGUAGE
+            ),
+            "native_language": normalize_language_code(
+                preferences.get("native_language"), DEFAULT_NATIVE_LANGUAGE
+            ),
         }
+        self.learning_language = self.user_data["preferences"]["learning_language"]
+        self.native_language = self.user_data["preferences"]["native_language"]
 
         self.user_data["last_session"] = {
             "pdf_path": str(last_session.get("pdf_path") or ""),
