@@ -81,7 +81,11 @@ class ModeSelectorDialog(QDialog):
 def load_user_data():
     default = {
         "mode": "pdf",
-        "preferences": {"preferred_mode": None},
+        "preferences": {
+            "preferred_mode": None,
+            "learning_language": "es",
+            "native_language": "en",
+        },
         "last_session": {
             "pdf_path": "",
             "video_path": "",
@@ -93,6 +97,16 @@ def load_user_data():
             loaded = json.loads(USER_DATA_PATH.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 default.update(loaded)
+                loaded_preferences = loaded.get("preferences", {})
+                if isinstance(loaded_preferences, dict):
+                    merged_preferences = dict(default["preferences"])
+                    merged_preferences.update(loaded_preferences)
+                    default["preferences"] = merged_preferences
+                loaded_last = loaded.get("last_session", {})
+                if isinstance(loaded_last, dict):
+                    merged_last = dict(default["last_session"])
+                    merged_last.update(loaded_last)
+                    default["last_session"] = merged_last
         except Exception:
             pass
     return default

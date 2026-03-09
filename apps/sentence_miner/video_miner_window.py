@@ -63,7 +63,7 @@ class SubtitleGeneratorWorker(QRunnable):
 
 
 class SubtitleGeneratorDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, default_language="es"):
         super().__init__(parent)
         self.setWindowTitle("Generate Subtitles")
         self.resize(420, 220)
@@ -80,7 +80,7 @@ class SubtitleGeneratorDialog(QDialog):
 
         language_row = QHBoxLayout()
         language_row.addWidget(QLabel("Language:"))
-        self.language_input = QLineEdit("es")
+        self.language_input = QLineEdit(default_language or "es")
         language_row.addWidget(self.language_input)
         layout.addLayout(language_row)
 
@@ -448,7 +448,7 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
             QMessageBox.information(self, "No Video", "Open a video file first.")
             return
 
-        dialog = SubtitleGeneratorDialog(self)
+        dialog = SubtitleGeneratorDialog(self, default_language=self._get_whisper_learning_language())
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 

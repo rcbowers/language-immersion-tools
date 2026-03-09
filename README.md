@@ -43,45 +43,51 @@ pip install -r requirements.txt
 
 ## YouTube Subtitle Generator
 
-Generate Spanish (or other language) subtitles from YouTube videos.
+Generate Spanish (or other language) subtitles from YouTube videos or local video folders.
 
 ### Basic Usage
 
 ```bash
-# Default base model
-python youtube_subtitle_generator.py "https://youtube.com/watch?v=VIDEO_ID"
+# YouTube mode: provide a URL list file (one URL per line)
+python youtube_subtitle_generator.py --mode youtube --url-file urls.txt
 
-# GPU-accelerated version (requires CUDA)
-python youtube_subtitle_generator_gpu.py "URL"
+# Folder mode: generate subtitles for all videos in a folder (recursive)
+python youtube_subtitle_generator.py --mode folder --video-folder "immersion materials"
+
+# Enable GPU if available (falls back to CPU if CUDA is unavailable)
+python youtube_subtitle_generator.py --mode folder --video-folder "immersion materials" --gpu
 ```
 
 ### Model Options
 
 ```bash
 # Tiny - fastest, least accurate (~75MB)
-python youtube_subtitle_generator.py -m tiny "URL"
+python youtube_subtitle_generator.py --mode youtube --url-file urls.txt -m tiny
 
 # Base - good balance (default, ~142MB)
-python youtube_subtitle_generator.py -m base "URL"
+python youtube_subtitle_generator.py --mode youtube --url-file urls.txt -m base
 
 # Small - better accuracy (~466MB)
-python youtube_subtitle_generator.py -m small "URL"
+python youtube_subtitle_generator.py --mode youtube --url-file urls.txt -m small
 
 # Medium - very accurate (~1.5GB)
-python youtube_subtitle_generator.py -m medium "URL"
+python youtube_subtitle_generator.py --mode youtube --url-file urls.txt -m medium
 
 # Large - best accuracy (~3GB, requires good GPU)
-python youtube_subtitle_generator.py -m large "URL"
+python youtube_subtitle_generator.py --mode youtube --url-file urls.txt -m large
 ```
 
 ### Additional Options
 
 ```bash
 # Keep the audio file
-python youtube_subtitle_generator.py --keep-audio "URL"
+python youtube_subtitle_generator.py --mode youtube --url-file urls.txt --keep-audio
 
 # Custom output directory
-python youtube_subtitle_generator.py -o "my_subtitles" "URL"
+python youtube_subtitle_generator.py --mode youtube --url-file urls.txt -o "my_subtitles"
+
+# Folder mode with custom subtitle output directory
+python youtube_subtitle_generator.py --mode folder --video-folder "immersion materials" -o "my_subtitles"
 ```
 
 ### Model Size Recommendations
@@ -94,7 +100,8 @@ python youtube_subtitle_generator.py -o "my_subtitles" "URL"
 ### Output
 
 - Creates `.srt` subtitle files (standard format, works with most video players)
-- Files are saved in the `downloads/` folder (or custom directory)
+- YouTube mode saves files in `downloads/` by default (or custom directory)
+- Folder mode saves `.srt` next to each video by default (or custom directory)
 - Can be used with VLC, YouTube uploads, or sentence mining tools
 
 ---
@@ -109,10 +116,12 @@ Interactive sentence mining app with **PDF mode** and **Video mode** for creatin
 - **PDF Click Mining**: Click words in-page, including Shift+click range selection
 - **Video Subtitle Mining**: Click subtitle words, adjust subtitle timing offset, and mine while watching
 - **Automatic Translation**: Selected word/phrase is translated automatically
+- **Language Pair Selection**: Choose learning language and native language from GUI menus (Spanish, Japanese, Chinese, Italian, French, English)
 - **Context Capture**: Uses line/subtitle text as card context sentence
 - **Quick Add + Queue**: Add immediately to Anki or stage in `words_to_process.txt`
 - **Batch Queue Processing**: Process queued entries to Anki in one pass
 - **Anki Integration**: Direct connection to Anki via AnkiConnect
+- **Offline Translation Setup**: Argos Translate package/models are prepared in the background for the selected language pair when possible
 
 ### Setup
 
