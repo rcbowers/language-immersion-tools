@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -174,6 +175,8 @@ class ArgosSetupTask(QRunnable):
 
 
 class AbstractSentenceMinerWindow(QMainWindow):
+    FIXED_UI_SCALE = 1.0
+
     def __init__(self, title):
         super().__init__()
         self.setWindowTitle(title)
@@ -193,9 +196,7 @@ class AbstractSentenceMinerWindow(QMainWindow):
         self.sentence_counts = {}
         self.anki_process = None
 
-        self.ui_scale = 1.0
-        self.min_ui_scale = 0.8
-        self.max_ui_scale = 1.8
+        self.ui_scale = self.FIXED_UI_SCALE
         self.base_font = QApplication.font()
 
         self.user_data_path = Path(INPUT_FILE).resolve().with_name("sentence_miner_user_data.json")
@@ -270,18 +271,19 @@ class AbstractSentenceMinerWindow(QMainWindow):
         selection_group = QGroupBox("Selection")
         selection_form = QFormLayout(selection_group)
 
-        self.word_value = QLabel("(none)")
-        self.word_value.setWordWrap(True)
+        self.word_value = QLineEdit()
+        self.word_value.setPlaceholderText("Enter word or phrase to translate")
+        self.word_value.returnPressed.connect(self._translate_word_field_input)
         selection_form.addRow("Word:", self.word_value)
 
         self.sentence_value = QTextEdit()
         self.sentence_value.setReadOnly(True)
-        self.sentence_value.setFixedHeight(120)
+        self.sentence_value.setFixedHeight(88)
         selection_form.addRow("Context:", self.sentence_value)
 
         self.translation_value = QTextEdit()
         self.translation_value.setReadOnly(True)
-        self.translation_value.setFixedHeight(100)
+        self.translation_value.setFixedHeight(72)
         selection_form.addRow("Translation:", self.translation_value)
 
         layout.addWidget(selection_group)
@@ -345,16 +347,6 @@ class AbstractSentenceMinerWindow(QMainWindow):
         return button
 
     def _build_common_toolbar_menus(self, toolbar):
-        window_menu = QMenu("Window", self)
-        self._add_menu_action(
-            window_menu,
-            "Zoom GUI in",
-            self._increase_ui_scale,
-            shortcuts=["Ctrl++", "Ctrl+="],
-        )
-        self._add_menu_action(window_menu, "Zoom GUI out", self._decrease_ui_scale, shortcuts="Ctrl+-")
-        self._add_toolbar_menu_button(toolbar, "Window", window_menu)
-
         anki_menu = QMenu("Anki", self)
         self._add_menu_action(anki_menu, "Start Anki", self._start_anki)
         self._add_menu_action(anki_menu, "Check Anki", self._refresh_anki_status)
@@ -392,20 +384,20 @@ class AbstractSentenceMinerWindow(QMainWindow):
         current_size = scaled_font.pointSizeF()
         if current_size <= 0:
             current_size = 10.0
-        scaled_font.setPointSizeF(current_size * self.ui_scale)
+        scaled_font.setPointSizeF(current_size * self.FIXED_UI_SCALE)
         QApplication.instance().setFont(scaled_font)
 
     def _increase_ui_scale(self):
-        self.ui_scale = min(self.max_ui_scale, self.ui_scale + 0.1)
+        self.ui_scale = self.FIXED_UI_SCALE
         self._apply_ui_scale()
         self._persist_common_preferences()
-        self._set_status(f"UI scale: {int(self.ui_scale * 100)}%", 1500)
+        self._set_status(f"UI scale: {int(self.FIXED_UI_SCALE * 100)}%", 1500)
 
     def _decrease_ui_scale(self):
-        self.ui_scale = max(self.min_ui_scale, self.ui_scale - 0.1)
+        self.ui_scale = self.FIXED_UI_SCALE
         self._apply_ui_scale()
         self._persist_common_preferences()
-        self._set_status(f"UI scale: {int(self.ui_scale * 100)}%", 1500)
+        self._set_status(f"UI scale: {int(self.FIXED_UI_SCALE * 100)}%", 1500)
 
     def _clear_selection_state(self):
         self.selected_word = ""
@@ -522,6 +514,21 @@ class AbstractSentenceMinerWindow(QMainWindow):
         task.signals.failed.connect(self._on_translation_failed)
         self.thread_pool.start(task)
 
+    def _translate_word_field_input(self):
+        text = self.word_value.text().strip()
+        if not text:
+            self.selected_word = ""
+            self.selected_translation = ""
+            self._update_selection_panel()
+            self._update_action_buttons()
+            return
+
+        self.selected_word = text
+        self.selected_translation = "Translating..."
+        self._update_selection_panel()
+        self._update_action_buttons()
+        self._request_translation(text)
+
     def _is_garbage_translation(self, translated_text):
         if not translated_text or len(translated_text.strip()) < 2:
             return True
@@ -585,12 +592,13 @@ class AbstractSentenceMinerWindow(QMainWindow):
         self._set_status(f"Translation failed: {error_message}", 4000)
 
     def _update_selection_panel(self):
-        self.word_value.setText(self.selected_word or "(none)")
+        if self.word_value.text() != self.selected_word:
+            self.word_value.setText(self.selected_word)
         self.sentence_value.setText(self.selected_sentence)
         self.translation_value.setText(self.selected_translation)
 
     def _update_action_buttons(self):
-        has_selection = bool(self.selected_word and self.selected_sentence)
+        has_selection = bool(self.selected_word)
         has_translation = bool(self.selected_translation and not self.selected_translation.startswith("Translation error:"))
         self.add_now_button.setEnabled(has_selection and has_translation)
         self.add_queue_button.setEnabled(has_selection and has_translation)
@@ -899,12 +907,11 @@ class AbstractSentenceMinerWindow(QMainWindow):
         os.replace(temp_path, self.user_data_path)
 
     def _restore_common_preferences(self):
-        prefs = self.user_data.get("preferences", {})
-        self.ui_scale = max(self.min_ui_scale, min(self.max_ui_scale, float(prefs.get("ui_scale", 1.0))))
+        self.ui_scale = self.FIXED_UI_SCALE
         self._apply_ui_scale()
 
     def _persist_common_preferences(self):
-        self.user_data.setdefault("preferences", {})["ui_scale"] = self.ui_scale
+        self.user_data.setdefault("preferences", {})["ui_scale"] = self.FIXED_UI_SCALE
         self._save_user_data()
 
     def _count_words(self, text):

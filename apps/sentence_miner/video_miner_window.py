@@ -5,7 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QSizePolicy,
+    QTextEdit,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -116,6 +118,8 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         self.media_player = None
         self.audio_output = None
         self.video_widget = None
+        self.video_container = None
+        self.transport_overlay = None
 
         self.subtitle_label = None
         self.subtitle_parser = None
@@ -129,6 +133,8 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         self.play_pause_toolbar_action = None
         self.position_slider = None
         self.subtitle_offset_label = None
+        self.subtitle_debug_bounds_value = None
+        self.subtitle_debug_click_value = None
         self.time_label = None
         self.speed_action_group = None
         self.speed_menu_actions = {}
@@ -136,16 +142,20 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         self.subtitle_offset_ms = 0
         self._session_timer = QTimer()
         self._session_timer.setInterval(5000)
+        self._transport_hide_timer = QTimer()
+        self._transport_hide_timer.setSingleShot(True)
+        self._transport_hide_timer.setInterval(700)
 
         self._subtitle_thread_pool = QThreadPool.globalInstance()
 
         super().__init__("Spanish Video Sentence Miner")
-        self._add_offset_status_to_right_panel()
+        self._add_video_debug_status_to_right_panel()
 
+        self._transport_hide_timer.timeout.connect(self._hide_transport_overlay_if_idle)
         self._session_timer.timeout.connect(self._persist_last_session)
         self._session_timer.start()
 
-    def _add_offset_status_to_right_panel(self):
+    def _add_video_debug_status_to_right_panel(self):
         if not self.right_panel:
             return
         layout = self.right_panel.layout()
@@ -153,6 +163,19 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
             return
 
         self.subtitle_offset_label = QLabel("Offset: +0.00s")
+        self.subtitle_debug_bounds_value = QTextEdit()
+        self.subtitle_debug_bounds_value.setReadOnly(True)
+        self.subtitle_debug_bounds_value.setFixedHeight(180)
+        self.subtitle_debug_click_value = QTextEdit()
+        self.subtitle_debug_click_value.setReadOnly(True)
+        self.subtitle_debug_click_value.setFixedHeight(72)
+
+        debug_group = QGroupBox("Subtitle Debug")
+        debug_layout = QVBoxLayout(debug_group)
+        debug_layout.addWidget(QLabel("Current Subtitle Word Bounds"))
+        debug_layout.addWidget(self.subtitle_debug_bounds_value)
+        debug_layout.addWidget(QLabel("Last Subtitle Click"))
+        debug_layout.addWidget(self.subtitle_debug_click_value)
 
         insert_index = layout.count()
         if self.mode_indicator_label:
@@ -160,6 +183,9 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
             if mode_idx >= 0:
                 insert_index = mode_idx + 1
         layout.insertWidget(insert_index, self.subtitle_offset_label)
+        layout.insertWidget(insert_index + 1, debug_group)
+        self._refresh_subtitle_debug_bounds()
+        self._record_subtitle_click_debug(None)
 
     def _build_mode_toolbar(self):
         toolbar = QToolBar("Video Tools")
@@ -233,38 +259,64 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(8, 8, 8, 8)
 
-        self.video_widget = QVideoWidget()
+        self.video_container = QWidget(panel)
+        self.video_container.setMinimumHeight(480)
+        self.video_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.video_container.setMouseTracking(True)
+        self.video_container.installEventFilter(self)
+        video_layout = QVBoxLayout(self.video_container)
+        video_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.video_widget = QVideoWidget(self.video_container)
         self.video_widget.setMinimumHeight(480)
         self.video_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        layout.addWidget(self.video_widget, stretch=1)
+        self.video_widget.setMouseTracking(True)
+        self.video_widget.installEventFilter(self)
+        video_layout.addWidget(self.video_widget, stretch=1)
 
-        timeline_widget = QWidget(panel)
-        timeline_widget.setFixedHeight(22)
-        timeline_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        timeline_layout = QHBoxLayout(timeline_widget)
-        timeline_layout.setContentsMargins(8, 4, 8, 4)
+        self.transport_overlay = QWidget(self, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+        self.transport_overlay.setObjectName("transportOverlay")
+        self.transport_overlay.setStyleSheet(
+            "#transportOverlay {"
+            "background-color: rgba(140, 140, 140, 210);"
+            "border-radius: 10px;"
+            "}"
+        )
+        self.transport_overlay.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.transport_overlay.hide()
+        self.transport_overlay.setMouseTracking(True)
+        self.transport_overlay.installEventFilter(self)
+        timeline_layout = QHBoxLayout(self.transport_overlay)
+        timeline_layout.setContentsMargins(12, 4, 12, 4)
+        timeline_layout.setSpacing(8)
         self.play_pause_button = QPushButton("▶")
         self.play_pause_button.setMinimumWidth(42)
         self.play_pause_button.setToolTip("Play/Pause")
         self.play_pause_button.clicked.connect(self._toggle_play_pause)
+        self.play_pause_button.installEventFilter(self)
         timeline_layout.addWidget(self.play_pause_button)
 
         self.position_slider = QSlider(Qt.Orientation.Horizontal)
         self.position_slider.setRange(0, 0)
+        self.position_slider.setMouseTracking(True)
+        self.position_slider.installEventFilter(self)
         self.position_slider.sliderPressed.connect(self._on_slider_pressed)
         self.position_slider.sliderReleased.connect(self._on_slider_released)
         self.position_slider.sliderMoved.connect(self._on_slider_moved)
         timeline_layout.addWidget(self.position_slider, stretch=1)
 
         self.time_label = QLabel("00:00 / 00:00")
+        self.time_label.installEventFilter(self)
         timeline_layout.addWidget(self.time_label)
-        layout.addWidget(timeline_widget)
+        layout.addWidget(self.video_container, stretch=1)
 
         self.subtitle_label = ClickableSubtitleLabel(panel)
         self.subtitle_label.setFixedHeight(96)
-        self.subtitle_label.set_subtitle_text("")
+        self.subtitle_label.set_subtitle(None)
         self.subtitle_label.show()
         self.subtitle_label.clicked.connect(self._on_subtitle_click)
+        self.subtitle_label.debug_clicked.connect(self._record_subtitle_click_debug)
+        self.subtitle_label.layout_updated.connect(self._refresh_subtitle_debug_bounds)
         layout.addWidget(self.subtitle_label)
 
         self.media_player = QMediaPlayer(self)
@@ -281,6 +333,7 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         return panel
 
     def _stabilize_video_layout(self):
+        self._position_transport_overlay()
         if self.position_slider:
             self.position_slider.updateGeometry()
         if self.time_label:
@@ -289,6 +342,125 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         if central:
             central.updateGeometry()
             central.update()
+
+    def eventFilter(self, watched, event):
+        transport_widgets = {
+            self.video_container,
+            self.video_widget,
+            self.transport_overlay,
+            self.play_pause_button,
+            self.position_slider,
+            self.time_label,
+        }
+        if watched in transport_widgets:
+            widget_name = self._transport_debug_widget_name(watched)
+            if event.type() == QEvent.Type.Resize and watched == self.video_container:
+                print(f"[transport-debug] resize on {widget_name}: size={self.video_container.size()}")
+                self._position_transport_overlay()
+            elif event.type() in (QEvent.Type.Enter, QEvent.Type.HoverEnter):
+                print(f"[transport-debug] enter on {widget_name}")
+                self._show_transport_overlay()
+            elif event.type() == QEvent.Type.MouseMove:
+                print(f"[transport-debug] mouse move on {widget_name}")
+                self._show_transport_overlay()
+            elif event.type() == QEvent.Type.Leave:
+                print(f"[transport-debug] leave on {widget_name}")
+                self._schedule_transport_overlay_hide()
+        return super().eventFilter(watched, event)
+
+    def _position_transport_overlay(self):
+        if not self.video_container or not self.transport_overlay:
+            return
+
+        self.transport_overlay.adjustSize()
+        container_top_left = self.video_container.mapToGlobal(self.video_container.rect().topLeft())
+        margin = 16
+        max_width = max(240, self.video_container.width() - (margin * 2))
+        overlay_width = min(max_width, 560)
+        overlay_height = self.transport_overlay.sizeHint().height()
+        x = container_top_left.x() + max(margin, (self.video_container.width() - overlay_width) // 2)
+        y = container_top_left.y() + max(margin, self.video_container.height() - overlay_height - margin)
+        self.transport_overlay.setGeometry(x, y, overlay_width, overlay_height)
+        self.transport_overlay.raise_()
+        print(
+            "[transport-debug] position overlay:",
+            f"container_top_left=({container_top_left.x()}, {container_top_left.y()})",
+            f"container_size=({self.video_container.width()}x{self.video_container.height()})",
+            f"overlay_geometry={self.transport_overlay.geometry()}",
+        )
+
+    def _show_transport_overlay(self):
+        if not self.transport_overlay:
+            return
+        self._transport_hide_timer.stop()
+        self._position_transport_overlay()
+        self.transport_overlay.show()
+        self.transport_overlay.raise_()
+        print(
+            "[transport-debug] show overlay:",
+            f"visible={self.transport_overlay.isVisible()}",
+            f"geometry={self.transport_overlay.geometry()}",
+        )
+
+    def _schedule_transport_overlay_hide(self):
+        if not self.transport_overlay or self._is_slider_dragging:
+            print(
+                "[transport-debug] skip schedule hide:",
+                f"has_overlay={bool(self.transport_overlay)}",
+                f"is_slider_dragging={self._is_slider_dragging}",
+            )
+            return
+        print("[transport-debug] schedule hide")
+        self._transport_hide_timer.start()
+
+    def _hide_transport_overlay_if_idle(self):
+        if not self.transport_overlay or self._is_slider_dragging:
+            print(
+                "[transport-debug] skip hide:",
+                f"has_overlay={bool(self.transport_overlay)}",
+                f"is_slider_dragging={self._is_slider_dragging}",
+            )
+            return
+        if any(
+            widget and widget.underMouse()
+            for widget in (
+                self.video_container,
+                self.video_widget,
+                self.transport_overlay,
+                self.play_pause_button,
+                self.position_slider,
+                self.time_label,
+            )
+        ):
+            print("[transport-debug] keep overlay visible because pointer is still over transport/video")
+            return
+        self.transport_overlay.hide()
+        print("[transport-debug] hide overlay")
+
+    def _transport_debug_widget_name(self, widget):
+        if widget is self.video_container:
+            return "video_container"
+        if widget is self.video_widget:
+            return "video_widget"
+        if widget is self.transport_overlay:
+            return "transport_overlay"
+        if widget is self.play_pause_button:
+            return "play_pause_button"
+        if widget is self.position_slider:
+            return "position_slider"
+        if widget is self.time_label:
+            return "time_label"
+        return type(widget).__name__
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.transport_overlay and self.transport_overlay.isVisible():
+            self._position_transport_overlay()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        if self.transport_overlay and self.transport_overlay.isVisible():
+            self._position_transport_overlay()
 
     def _open_video_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open Video", "", self.SUPPORTED_VIDEO_FILTER)
@@ -339,7 +511,7 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         if auto_srt:
             self._load_subtitles(auto_srt)
         else:
-            self.subtitle_label.set_subtitle_text("")
+            self.subtitle_label.set_subtitle(None)
             self.subtitle_label.show()
             self.subtitle_parser = None
             self.current_srt_path = ""
@@ -477,26 +649,28 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
             self.subtitle_parser = SRTParser.from_file(srt_path)
             self.current_srt_path = srt_path
             self._set_status(f"Loaded subtitles: {os.path.basename(srt_path)}")
+            self._refresh_subtitle_debug_bounds()
             self._persist_last_session()
         except Exception as exc:
             QMessageBox.critical(self, "Subtitle Error", f"Failed to parse subtitles:\n{exc}")
             self.subtitle_parser = None
             self.current_srt_path = ""
+            self._refresh_subtitle_debug_bounds()
 
     def _on_subtitle_click(self, word, token_index, modifiers):
         if not self.current_subtitle:
             return
 
-        tokens = self.current_subtitle.text.split()
-        if token_index < 0 or token_index >= len(tokens):
+        words = self.current_subtitle.words
+        if token_index < 0 or token_index >= len(words):
             return
 
         shift_pressed = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
-        selected_indices = self._resolve_selected_subtitle_indices(token_index, shift_pressed, len(tokens))
+        selected_indices = self._resolve_selected_subtitle_indices(token_index, shift_pressed, len(words))
 
         cleaned_words = []
         for idx in selected_indices:
-            cleaned = self._clean_word(tokens[idx])
+            cleaned = self._clean_word(words[idx].word)
             if cleaned:
                 cleaned_words.append(cleaned)
 
@@ -540,23 +714,26 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         if not self.subtitle_parser:
             self.current_subtitle = None
             self.subtitle_selection_anchor = None
-            self.subtitle_label.set_subtitle_text("")
+            self.subtitle_label.set_subtitle(None)
             self.subtitle_label.show()
+            self._refresh_subtitle_debug_bounds()
             return
         lookup_position = max(0, position - self.subtitle_offset_ms)
         subtitle = self.subtitle_parser.get_subtitle_at_time(lookup_position)
         if subtitle is None:
             self.current_subtitle = None
             self.subtitle_selection_anchor = None
-            self.subtitle_label.set_subtitle_text("")
+            self.subtitle_label.set_subtitle(None)
             self.subtitle_label.show()
+            self._refresh_subtitle_debug_bounds()
             return
 
         if self.current_subtitle is None or subtitle.index != self.current_subtitle.index:
             self.current_subtitle = subtitle
             self.subtitle_selection_anchor = None
-            self.subtitle_label.set_subtitle_text(subtitle.text)
+            self.subtitle_label.set_subtitle(subtitle)
             self.subtitle_label.show()
+            self._refresh_subtitle_debug_bounds()
 
     def _on_duration_changed(self, duration):
         self.position_slider.setRange(0, max(0, duration))
@@ -597,10 +774,12 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
 
     def _on_slider_pressed(self):
         self._is_slider_dragging = True
+        self._show_transport_overlay()
 
     def _on_slider_released(self):
         self._is_slider_dragging = False
         self.media_player.setPosition(self.position_slider.value())
+        self._schedule_transport_overlay_hide()
 
     def _on_slider_moved(self, value):
         duration = self.media_player.duration()
@@ -651,9 +830,49 @@ class VideoSentenceMinerWindow(AbstractSentenceMinerWindow):
         self.current_subtitle = None
         self.subtitle_selection_anchor = None
         if self.subtitle_label:
-            self.subtitle_label.set_subtitle_text("")
+            self.subtitle_label.set_subtitle(None)
             self.subtitle_label.show()
+        self._refresh_subtitle_debug_bounds()
+        self._record_subtitle_click_debug(None)
+
+    def _refresh_subtitle_debug_bounds(self):
+        if not self.subtitle_debug_bounds_value:
+            return
+
+        if not self.current_subtitle or not self.subtitle_label:
+            self.subtitle_debug_bounds_value.setPlainText("No active subtitle.")
+            return
+
+        lines = []
+        for entry in self.subtitle_label.get_word_debug_bounds():
+            rect_text = ", ".join(self._format_debug_rect(rect) for rect in entry["rects"]) or "no rects"
+            lines.append(f"[{entry['index']}] {entry['word']}: {rect_text}")
+        self.subtitle_debug_bounds_value.setPlainText("\n".join(lines) or "No active subtitle.")
+
+    def _record_subtitle_click_debug(self, payload):
+        if not self.subtitle_debug_click_value:
+            return
+        if not payload:
+            self.subtitle_debug_click_value.setPlainText("No subtitle click recorded.")
+            return
+
+        coords = f"widget=({payload['x']:.1f}, {payload['y']:.1f})"
+        if payload.get("index") is None:
+            self.subtitle_debug_click_value.setPlainText(f"{coords}\nresult=miss")
+            return
+
+        self.subtitle_debug_click_value.setPlainText(
+            f"{coords}\nresult=hit [{payload['index']}] {payload['word']}"
+        )
+
+    def _format_debug_rect(self, rect):
+        return (
+            f"(x={rect['x']:.1f}, y={rect['y']:.1f}, "
+            f"w={rect['width']:.1f}, h={rect['height']:.1f})"
+        )
 
     def closeEvent(self, event):
+        if self.transport_overlay:
+            self.transport_overlay.hide()
         self._persist_last_session()
         super().closeEvent(event)
