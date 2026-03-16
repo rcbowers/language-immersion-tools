@@ -1,0 +1,5 @@
+immersion materials/
+.claude/
+.venv/
+.idea/
+to_subtitle/
