@@ -29,8 +29,8 @@ centering, and highlighting. Understanding the coordinate system is crucial:
 
 4. Word Rectangles (_word_rects):
    - Stored in WIDGET COORDINATE SPACE
-   - Built using: left = cursor_x + line.position().x()
-   - line.position().x() already includes content_rect.left() offset
+   - QTextLine.cursorToX() already reports x positions in the same layout space used
+     during painting, including the line's horizontal placement
    - Therefore rectangles can be directly compared with mouse event positions
 
 Hit Testing:
@@ -276,7 +276,7 @@ class ClickableSubtitleLabel(QLabel):
 
                 start_x = self._cursor_x(line, overlap_start)
                 end_x = self._cursor_x(line, overlap_end)
-                left = min(start_x, end_x) + line.position().x()
+                left = min(start_x, end_x)
                 width = max(1.0, abs(end_x - start_x))
                 rect = QRectF(left, line.position().y(), width, line.height())
                 word_rects[word_index].append(rect)

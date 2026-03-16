@@ -40,6 +40,15 @@ class SubtitleWidgetTests(unittest.TestCase):
         self.assertTrue(rects, f"word index {word_index} did not receive a hit-test rect")
         return rects[0].center()
 
+    def _line_for_word(self, widget, word):
+        for line_index in range(widget._layout.lineCount()):
+            line = widget._layout.lineAt(line_index)
+            line_start = line.textStart()
+            line_end = line_start + line.textLength()
+            if max(word.start, line_start) < min(word.end, line_end):
+                return line
+        self.fail(f"no layout line found for word {word.word!r}")
+
     def test_hit_testing_single_line(self):
         subtitle = SRTParser.from_text("1\n00:00:00,000 --> 00:00:02,000\nhola mundo cruel").subtitles[0]
         widget = self._make_widget(subtitle, width=520, height=100)
@@ -204,6 +213,22 @@ class SubtitleWidgetTests(unittest.TestCase):
                 self.assertLessEqual(rect.bottom(), widget.height(),
                                     f"Word {word_index} rect should be within widget height")
 
+    def test_single_line_word_rects_match_qtextlayout_positions(self):
+        subtitle = SRTParser.from_text("1\n00:00:00,000 --> 00:00:02,000\nuno dos tres pero cinco").subtitles[0]
+        widget = self._make_widget(subtitle, width=700, height=100)
+
+        target_index = 3
+        target_word = subtitle.words[target_index]
+        target_rect = widget._word_rects[target_index][0]
+        line = self._line_for_word(widget, target_word)
+
+        start_x = widget._cursor_x(line, target_word.start)
+        end_x = widget._cursor_x(line, target_word.end)
+
+        self.assertAlmostEqual(target_rect.left(), min(start_x, end_x), places=2)
+        self.assertAlmostEqual(target_rect.width(), abs(end_x - start_x), places=2)
+        self.assertLessEqual(target_rect.right(), widget.contentsRect().right() + 1.0)
+
     def test_coordinate_system_validation(self):
         """Test the internal coordinate system validation."""
         subtitle = SRTParser.from_text(
@@ -353,53 +378,45 @@ class VideoSubtitleSelectionTests(unittest.TestCase):
         self.assertTrue(window.add_now_button.isEnabled())
         self.assertTrue(window.add_queue_button.isEnabled())
 
-    def test_video_window_formats_subtitle_debug_bounds(self):
+    def test_video_window_time_label_width_uses_longest_duration_format(self):
         window = VideoSentenceMinerWindow.__new__(VideoSentenceMinerWindow)
-        window.current_subtitle = object()
-        window.subtitle_debug_bounds_value = QTextEdit()
-
-        class _StubLabel:
-            def get_word_debug_bounds(self):
-                return [
-                    {
-                        "index": 0,
-                        "word": "hola",
-                        "rects": [{"x": 12.25, "y": 18.0, "width": 33.2, "height": 21.0}],
-                    },
-                    {
-                        "index": 1,
-                        "word": "mundo",
-                        "rects": [{"x": 52.0, "y": 18.0, "width": 48.0, "height": 21.0}],
-                    },
-                ]
-
-        window.subtitle_label = _StubLabel()
-        window._format_debug_rect = VideoSentenceMinerWindow._format_debug_rect.__get__(
+        window.time_label = QLabel()
+        window._time_label_sample_text = VideoSentenceMinerWindow._time_label_sample_text.__get__(
             window, VideoSentenceMinerWindow
         )
 
-        VideoSentenceMinerWindow._refresh_subtitle_debug_bounds(window)
+        VideoSentenceMinerWindow._update_time_label_width(window, 4_200_000)
 
-        text = window.subtitle_debug_bounds_value.toPlainText()
-        self.assertIn("[0] hola: (x=12.2, y=18.0, w=33.2, h=21.0)", text)
-        self.assertIn("[1] mundo: (x=52.0, y=18.0, w=48.0, h=21.0)", text)
+        expected = window.time_label.fontMetrics().horizontalAdvance("00:00:00 / 00:00:00") + 10
+        self.assertEqual(window.time_label.width(), expected)
+        self.assertEqual(window.time_label.minimumWidth(), expected)
+        self.assertEqual(window.time_label.maximumWidth(), expected)
 
-    def test_video_window_records_last_subtitle_click_debug(self):
+    def test_video_window_focus_helper_clears_word_field_focus(self):
+        host = QWidget()
+        layout = QVBoxLayout(host)
+        word_value = QLineEdit()
+        video_container = QWidget()
+        video_container.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        layout.addWidget(word_value)
+        layout.addWidget(video_container)
+        host.show()
+        self.app.processEvents()
+
+        word_value.setFocus()
+        self.app.processEvents()
+        self.assertTrue(word_value.hasFocus())
+
         window = VideoSentenceMinerWindow.__new__(VideoSentenceMinerWindow)
-        window.subtitle_debug_click_value = QTextEdit()
+        window.word_value = word_value
+        window.video_container = video_container
+        window.video_widget = None
 
-        VideoSentenceMinerWindow._record_subtitle_click_debug(
-            window,
-            {"x": 50.0, "y": 24.5, "word": "hola", "index": 0},
-        )
-        self.assertIn("widget=(50.0, 24.5)", window.subtitle_debug_click_value.toPlainText())
-        self.assertIn("result=hit [0] hola", window.subtitle_debug_click_value.toPlainText())
+        VideoSentenceMinerWindow._focus_video_playback_surface(window)
+        self.app.processEvents()
 
-        VideoSentenceMinerWindow._record_subtitle_click_debug(
-            window,
-            {"x": 5.0, "y": 5.0, "word": None, "index": None},
-        )
-        self.assertIn("result=miss", window.subtitle_debug_click_value.toPlainText())
+        self.assertFalse(word_value.hasFocus())
+        self.assertTrue(video_container.hasFocus())
 
     def test_transport_overlay_positions_inside_video_container(self):
         window = VideoSentenceMinerWindow.__new__(VideoSentenceMinerWindow)
