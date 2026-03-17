@@ -1,3 +1,5 @@
+![logo.png](img%2Flogo.png)
+
 # Language Immersion Tools
 
 A collection of Python tools designed to supercharge your language immersion workflow. Currently focused on Spanish, but adaptable to other languages.
