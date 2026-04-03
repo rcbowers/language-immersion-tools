@@ -1,6 +1,6 @@
 @echo off
 echo ================================================
-echo Spanish Sentence Miner - EXE Builder
+echo LinguaLoop Workspace - EXE Builder
 echo ================================================
 echo.
 
@@ -25,16 +25,17 @@ echo.
 echo Building executable with PyInstaller...
 echo.
 
-REM Check if icon exists
+set ICON_ARG=
 if exist "app_icon.ico" (
     echo Found app_icon.ico - using custom icon
-    pyinstaller sentence_miner.spec
+    set ICON_ARG=--icon app_icon.ico
 ) else (
     echo WARNING: app_icon.ico not found - using default icon
     echo To add a custom icon, place an .ico file named 'app_icon.ico' in this folder
     echo.
-    pyinstaller sentence_miner.spec
 )
+
+pyinstaller --noconfirm --windowed --name LinguaLoopWorkspace --paths src %ICON_ARG% src\immersion_app\app.py
 
 echo.
 echo ================================================
@@ -42,7 +43,7 @@ echo Build Complete!
 echo ================================================
 echo.
 echo Your executable is located at:
-echo dist\SpanishSentenceMiner.exe
+echo dist\LinguaLoopWorkspace.exe
 echo.
 echo You can now run the application by double-clicking the .exe file
 echo.
