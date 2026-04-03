@@ -3,3 +3,8 @@ immersion materials/
 .venv/
 .idea/
 to_subtitle/
+__pycache__/
+apps/**/__pycache__/
+downloads/
+data/
+*.pyc

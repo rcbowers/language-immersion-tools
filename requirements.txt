@@ -11,6 +11,7 @@ argostranslate>=1.9.0
 spacy>=3.0.0 # Offline spanish translation
 
 openai-whisper # For subtitle generation
+pytest>=8.0.0
 
 # After installing requirements, download Spanish model with:
 # python -m spacy download es_core_news_sm
