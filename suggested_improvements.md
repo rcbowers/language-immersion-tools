@@ -5,11 +5,11 @@ Evolve your current toolkit (subtitle generation + PDF click-mining + Anki pipel
 This roadmap is sequenced by impact and dependency, with explicit scope so implementation is decision-complete.
 
 ## Current Baseline (from repo)
-- Working PDF word/phrase click-miner in `apps/sentence_miner/sentence_miner_gui.py` (translation + Add Now / queue / process queue).
-- AnkiConnect card creation pipeline in `apps/sentence_miner/spanish_sentence_miner.py`.
-- YouTube subtitle generation via Whisper in `apps/subtitle generation/youtube_subtitle_generator*.py`.
-- Corpus-level analysis in `apps/subtitle generation/word_frequency_analyzer.py`.
-- Queue and processed logs in root (`words_to_process.txt`, `processed_words.txt`).
+- Working unified PDF/video click-miner in `src/immersion_app/gui/main_window.py`.
+- AnkiConnect card creation pipeline in `src/immersion_app/core/anki.py`.
+- Subtitle generation CLI and integration support in `src/immersion_app/cli/subtitles.py` and `src/immersion_app/integrations/subtitle_generation.py`.
+- Corpus-level analysis in `src/immersion_app/cli/analyze.py`.
+- Structured queue and processed logs in `data/`.
 
 ## Product Direction
 Build around one core loop:
@@ -246,7 +246,7 @@ Compatibility:
 ### Compatibility
 1. Import legacy `words_to_process.txt` and process without loss.
 2. Use default `Basic` note type and ensure old workflow still works.
-3. Existing CLI (`spanish_sentence_miner.py`) continues operating with unchanged commands.
+3. Existing queue-processing CLI remains available via the supported `immersion_app.cli.queue` command.
 
 ### Performance
 1. Large PDF (500+ pages) click latency stays acceptable.

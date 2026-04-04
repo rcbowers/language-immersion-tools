@@ -1,46 +1,23 @@
-#!/usr/bin/env python3
-"""Compatibility CLI for queued-card processing."""
+"""CLI entrypoint for queued-card processing."""
 
-from __future__ import annotations
-
-import sys
-from pathlib import Path
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SRC_ROOT = PROJECT_ROOT / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
-
-from immersion_app.core.anki import DECK_NAME, MODEL_NAME, add_anki_card, test_anki_connection
-from immersion_app.core.paths import QUEUE_JSON_PATH as INPUT_FILE, PROCESSED_LOG_PATH as PROCESSED_FILE
+from immersion_app.core.anki import add_anki_card, test_anki_connection
+from immersion_app.core.paths import PROCESSED_LOG_PATH, QUEUE_JSON_PATH
 from immersion_app.core.queue_store import append_processed_log, load_queue_entries, save_queue_entries
-
-
-def parse_input_file(filepath=None):
-    return load_queue_entries()
-
-
-def append_to_processed_file(entries):
-    append_processed_log(entries)
-
-
-def rewrite_input_file(entries):
-    save_queue_entries(entries)
 
 
 def main():
     print("=" * 60)
     print("Queued Card Processor")
     print("=" * 60)
+    print(f"Queue file: {QUEUE_JSON_PATH}")
     if not test_anki_connection():
         print("AnkiConnect is not available.")
-        return
+        return 1
 
     entries = load_queue_entries()
     if not entries:
         print("No queued entries found.")
-        return
+        return 0
 
     successful_entries = []
     failed_entries = []
@@ -64,7 +41,9 @@ def main():
     save_queue_entries(failed_entries)
     print(f"Added: {len(successful_entries)}")
     print(f"Failed: {len(failed_entries)}")
+    print(f"Processed log: {PROCESSED_LOG_PATH}")
+    return 0 if not failed_entries else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
