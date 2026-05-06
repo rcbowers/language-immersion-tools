@@ -10,14 +10,13 @@ from datetime import datetime
 from pathlib import Path
 
 import fitz
-from PySide6.QtCore import QObject, QPoint, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, QPoint, QRect, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QAction, QActionGroup, QImage, QIntValidator, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
-    QDockWidget,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -33,10 +32,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
     QStackedWidget,
-    QStatusBar,
     QTextEdit,
-    QToolBar,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -56,6 +52,12 @@ from immersion_app.core.paths import DATA_ROOT, PROCESSED_LOG_PATH, QUEUE_JSON_P
 from immersion_app.core.queue_store import append_processed_log, append_queue_entry, load_queue_entries, queue_count, save_queue_entries
 from immersion_app.core.user_data import load_user_data, save_user_data
 from immersion_app.gui.widgets.subtitle_widget import ClickableSubtitleLabel
+from immersion_app.gui.widgets.command_bar import CommandBar
+from immersion_app.gui.widgets.translation_popover import TranslationPopover
+from immersion_app.gui.widgets.chapter_rail import ChapterRail
+from immersion_app.gui.widgets.pdf_status_bar import PDFStatusBar
+from immersion_app.gui.widgets.transport_bar import TransportBar
+from immersion_app.gui.theme import Theme
 from immersion_app.integrations.subtitle_generation import generate_srt_from_video
 from immersion_app.integrations.translation_backends import OfflineTranslationBackend, OnlineTranslationBackend
 from immersion_app.media.subtitle_matching import find_best_srt_for_video
@@ -158,10 +160,16 @@ class SubtitleGeneratorDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Generate Subtitles")
         self.resize(420, 220)
+        self.setStyleSheet(f"QDialog {{ background-color: {Theme.BG}; }}")
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
         model_row = QHBoxLayout()
-        model_row.addWidget(QLabel("Model:"))
+        model_label = QLabel("Model:")
+        model_label.setStyleSheet(Theme.get_label_style("body"))
+        model_row.addWidget(model_label)
         self.model_combo = QComboBox()
         self.model_combo.addItems(["tiny", "base", "small", "medium"])
         self.model_combo.setCurrentText("base")
@@ -169,12 +177,16 @@ class SubtitleGeneratorDialog(QDialog):
         layout.addLayout(model_row)
 
         language_row = QHBoxLayout()
-        language_row.addWidget(QLabel("Language:"))
+        lang_label = QLabel("Language:")
+        lang_label.setStyleSheet(Theme.get_label_style("body"))
+        language_row.addWidget(lang_label)
         self.language_input = QLineEdit(default_language or "es")
+        self.language_input.setStyleSheet(Theme.get_input_style())
         language_row.addWidget(self.language_input)
         layout.addLayout(language_row)
 
         self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet(Theme.get_label_style("caption"))
         layout.addWidget(self.status_label)
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)
@@ -182,8 +194,11 @@ class SubtitleGeneratorDialog(QDialog):
         layout.addWidget(self.progress_bar)
 
         button_row = QHBoxLayout()
+        button_row.setSpacing(8)
         start_button = QPushButton("Generate")
+        start_button.setStyleSheet(Theme.get_button_style("primary"))
         cancel_button = QPushButton("Cancel")
+        cancel_button.setStyleSheet(Theme.get_button_style("secondary"))
         start_button.clicked.connect(self.accept)
         cancel_button.clicked.connect(self.reject)
         button_row.addWidget(start_button)
@@ -202,14 +217,42 @@ class QueueDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Queued Cards")
         self.resize(620, 420)
+        self.setStyleSheet(f"QDialog {{ background-color: {Theme.BG}; }}")
+
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
         self.summary_label = QLabel()
+        self.summary_label.setStyleSheet(Theme.get_label_style("body"))
         layout.addWidget(self.summary_label)
+
         self.list_widget = QListWidget()
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {Theme.SURFACE};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 6px;
+                padding: 8px;
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 13px;
+            }}
+            QListWidget::item {{
+                padding: 8px;
+                border-radius: 4px;
+            }}
+            QListWidget::item:hover {{
+                background-color: {Theme.SURFACE_ALT};
+            }}
+        """)
         layout.addWidget(self.list_widget)
+
         button_row = QHBoxLayout()
+        button_row.setSpacing(8)
         self.process_button = QPushButton("Process Queue")
+        self.process_button.setStyleSheet(Theme.get_button_style("primary"))
         close_button = QPushButton("Close")
+        close_button.setStyleSheet(Theme.get_button_style("secondary"))
         close_button.clicked.connect(self.accept)
         button_row.addWidget(self.process_button)
         button_row.addWidget(close_button)
@@ -282,8 +325,22 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._refresh_anki_status()
         self._restore_last_session()
         self._refresh_queue_summary()
+        self._update_command_bar_stats()
 
     def _build_ui(self):
+        # Create main container
+        main_container = QWidget()
+        main_layout = QVBoxLayout(main_container)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Command bar at top
+        self.command_bar = CommandBar()
+        self.command_bar.mode_changed.connect(self._on_mode_changed)
+        self.command_bar.settings_requested.connect(self._show_settings_dialog)
+        main_layout.addWidget(self.command_bar)
+
+        # Workspace stack (Welcome/PDF/Video pages)
         self.workspace_stack = QStackedWidget()
         self.welcome_page = self._build_welcome_page()
         self.pdf_page = self._build_pdf_page()
@@ -291,46 +348,112 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.workspace_stack.addWidget(self.welcome_page)
         self.workspace_stack.addWidget(self.pdf_page)
         self.workspace_stack.addWidget(self.video_page)
-        self.setCentralWidget(self.workspace_stack)
+        main_layout.addWidget(self.workspace_stack)
 
-        self._build_toolbar()
-        self._build_source_dock()
-        self._build_inspector_dock()
+        self.setCentralWidget(main_container)
 
-        status = QStatusBar()
-        self.translation_status_label = QLabel("Translation: checking...")
-        self.anki_status_label = QLabel("Anki: checking...")
-        status.addPermanentWidget(self.translation_status_label)
-        status.addPermanentWidget(self.anki_status_label)
-        self.setStatusBar(status)
+        # Apply background theme
+        self.setStyleSheet(f"QMainWindow {{ background-color: {Theme.BG}; }}")
 
-    def _build_toolbar(self):
-        toolbar = QToolBar("Workspace")
-        toolbar.setMovable(False)
-        self.addToolBar(toolbar)
+        # Initialize legacy widgets (temporary, will be removed with popover)
+        self._init_legacy_widgets()
 
-        library_menu = QMenu("Library", self)
-        self._add_menu_action(library_menu, "Open source", self._open_content_dialog, "Ctrl+O")
-        self._add_menu_action(library_menu, "Load subtitles", self._open_subtitle_dialog, "Ctrl+L")
-        self._add_menu_action(library_menu, "Show queue", self._show_queue_dialog)
-        self._add_toolbar_menu_button(toolbar, "Library", library_menu)
+        # Create translation popover
+        self.translation_popover = TranslationPopover(self)
+        self.translation_popover.add_requested.connect(self._add_now)
+        self.translation_popover.edit_requested.connect(self._on_popover_edit_requested)
+        self.translation_popover.closed.connect(self._on_popover_closed)
 
-        study_menu = QMenu("Study", self)
-        self._add_menu_action(study_menu, "Add now", self._add_now, "Ctrl+Return")
-        self._add_menu_action(study_menu, "Add to queue", self._add_to_queue, "Ctrl+Shift+Return")
-        self._add_menu_action(study_menu, "Process queue", self._process_queue)
-        self._add_toolbar_menu_button(toolbar, "Study", study_menu)
+        # Setup keyboard shortcuts
+        self._setup_keyboard_shortcuts()
 
-        tools_menu = QMenu("Tools", self)
-        self._add_menu_action(tools_menu, "Generate subtitles", self._generate_subtitles_interactive)
-        self._add_menu_action(tools_menu, "Start Anki", self._start_anki)
-        self._add_menu_action(tools_menu, "Check Anki", self._refresh_anki_status)
-        self._add_toolbar_menu_button(toolbar, "Tools", tools_menu)
+    def _setup_keyboard_shortcuts(self):
+        """Setup global keyboard shortcuts."""
+        # Mode switching
+        pdf_mode_action = QAction("PDF Mode", self)
+        pdf_mode_action.setShortcut(QKeySequence("Ctrl+1"))
+        pdf_mode_action.triggered.connect(lambda: self._on_mode_changed("pdf"))
+        self.addAction(pdf_mode_action)
 
-        settings_menu = QMenu("Settings", self)
-        self._add_menu_action(settings_menu, "Toggle translation mode", self._toggle_translation_mode)
+        video_mode_action = QAction("Video Mode", self)
+        video_mode_action.setShortcut(QKeySequence("Ctrl+2"))
+        video_mode_action.triggered.connect(lambda: self._on_mode_changed("video"))
+        self.addAction(video_mode_action)
 
-        learning_menu = settings_menu.addMenu("Learning language")
+        # File operations
+        open_action = QAction("Open source", self)
+        open_action.setShortcut(QKeySequence("Ctrl+O"))
+        open_action.triggered.connect(self._open_content_dialog)
+        self.addAction(open_action)
+
+        load_subs_action = QAction("Load subtitles", self)
+        load_subs_action.setShortcut(QKeySequence("Ctrl+L"))
+        load_subs_action.triggered.connect(self._open_subtitle_dialog)
+        self.addAction(load_subs_action)
+
+        # Study actions
+        add_now_action = QAction("Add now", self)
+        add_now_action.setShortcut(QKeySequence("Ctrl+Return"))
+        add_now_action.triggered.connect(self._add_now)
+        self.addAction(add_now_action)
+
+        add_queue_action = QAction("Add to queue", self)
+        add_queue_action.setShortcut(QKeySequence("Ctrl+Shift+Return"))
+        add_queue_action.triggered.connect(self._add_to_queue)
+        self.addAction(add_queue_action)
+
+        # Video playback
+        play_action = QAction("Play/Pause", self)
+        play_action.setShortcut(QKeySequence(Qt.Key.Key_Space))
+        play_action.triggered.connect(self._toggle_play_pause)
+        self.addAction(play_action)
+
+        # PDF navigation
+        prev_page_action = QAction("Previous Page", self)
+        prev_page_action.setShortcut(QKeySequence(Qt.Key.Key_Left))
+        prev_page_action.triggered.connect(self._prev_page)
+        self.addAction(prev_page_action)
+
+        next_page_action = QAction("Next Page", self)
+        next_page_action.setShortcut(QKeySequence(Qt.Key.Key_Right))
+        next_page_action.triggered.connect(self._next_page)
+        self.addAction(next_page_action)
+
+        # PDF zoom
+        zoom_in_action = QAction("Zoom In", self)
+        zoom_in_action.setShortcut(QKeySequence("Ctrl++"))
+        zoom_in_action.triggered.connect(self._zoom_in)
+        self.addAction(zoom_in_action)
+
+        zoom_out_action = QAction("Zoom Out", self)
+        zoom_out_action.setShortcut(QKeySequence("Ctrl+-"))
+        zoom_out_action.triggered.connect(self._zoom_out)
+        self.addAction(zoom_out_action)
+
+        # Close popover
+        escape_action = QAction("Close Popover", self)
+        escape_action.setShortcut(QKeySequence(Qt.Key.Key_Escape))
+        escape_action.triggered.connect(self._close_popover)
+        self.addAction(escape_action)
+
+    def _on_mode_changed(self, mode: str):
+        """Handle mode change from command bar."""
+        if mode == "pdf":
+            if self.doc:
+                self.workspace_stack.setCurrentWidget(self.pdf_page)
+        elif mode == "video":
+            if self.media_player.source().isValid():
+                self.workspace_stack.setCurrentWidget(self.video_page)
+
+    def _show_settings_dialog(self):
+        """Show settings dialog (stub for now - will implement later)."""
+        # TODO: Create a proper settings dialog
+        menu = QMenu(self)
+
+        menu.addAction("Toggle translation mode", self._toggle_translation_mode)
+        menu.addSeparator()
+
+        learning_menu = menu.addMenu("Learning language")
         learning_group = QActionGroup(self)
         learning_group.setExclusive(True)
         for code in list_language_codes():
@@ -341,7 +464,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             learning_group.addAction(action)
             learning_menu.addAction(action)
 
-        native_menu = settings_menu.addMenu("Native language")
+        native_menu = menu.addMenu("Native language")
         native_group = QActionGroup(self)
         native_group.setExclusive(True)
         for code in list_language_codes():
@@ -351,225 +474,238 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             action.triggered.connect(lambda checked=False, lang_code=code: self._set_native_language(lang_code))
             native_group.addAction(action)
             native_menu.addAction(action)
-        self._add_toolbar_menu_button(toolbar, "Settings", settings_menu)
 
-        play_action = QAction("Play/Pause", self)
-        play_action.setShortcut(QKeySequence(Qt.Key.Key_Space))
-        play_action.triggered.connect(self._toggle_play_pause)
-        self.addAction(play_action)
+        menu.addSeparator()
+        menu.addAction("Start Anki", self._start_anki)
+        menu.addAction("Check Anki", self._refresh_anki_status)
+        menu.addAction("Generate subtitles", self._generate_subtitles_interactive)
+
+        # Show menu at settings button
+        button_pos = self.command_bar.settings_button.mapToGlobal(
+            self.command_bar.settings_button.rect().bottomLeft()
+        )
+        menu.exec(button_pos)
 
     def _build_welcome_page(self):
+        """Build modern welcome page with themed styling."""
         page = QWidget()
+        page.setStyleSheet(f"QWidget {{ background-color: {Theme.BG}; }}")
+
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(48, 48, 48, 48)
         layout.addStretch(1)
-        title = QLabel("Open a PDF or video to start mining.")
+
+        # Title
+        title = QLabel("Open a PDF or video to start")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        font = title.font()
-        font.setPointSizeF(18.0)
-        font.setBold(True)
-        title.setFont(font)
+        title.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: {Theme.FONT_SIZE_TITLE};
+                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
+                margin-bottom: 12px;
+            }}
+        """)
         layout.addWidget(title)
 
-        subtitle = QLabel("Workflow: Open source -> select text -> review translation -> add now or queue.")
+        # Subtitle
+        subtitle = QLabel("Click any word to see translations and build your vocabulary")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_SOFT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 15px;
+                font-weight: {Theme.FONT_WEIGHT_REGULAR};
+                margin-bottom: 32px;
+            }}
+        """)
         layout.addWidget(subtitle)
 
+        # Buttons
         button_row = QHBoxLayout()
+        button_row.setSpacing(12)
+
         open_button = QPushButton("Open Source")
+        open_button.setStyleSheet(Theme.get_button_style("primary"))
+        open_button.setFixedHeight(40)
+        open_button.setMinimumWidth(140)
         open_button.clicked.connect(self._open_content_dialog)
-        queue_button = QPushButton("View Queue")
-        queue_button.clicked.connect(self._show_queue_dialog)
         button_row.addWidget(open_button)
+
+        queue_button = QPushButton("View Queue")
+        queue_button.setStyleSheet(Theme.get_button_style("secondary"))
+        queue_button.setFixedHeight(40)
+        queue_button.setMinimumWidth(140)
+        queue_button.clicked.connect(self._show_queue_dialog)
         button_row.addWidget(queue_button)
+
         wrapper = QWidget()
         wrapper.setLayout(button_row)
         layout.addWidget(wrapper, alignment=Qt.AlignmentFlag.AlignCenter)
+
         layout.addStretch(1)
+
+        # Keyboard shortcuts hint
+        shortcuts = QLabel("Ctrl+O to open · Ctrl+1/2 to switch modes")
+        shortcuts.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        shortcuts.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_MUTED};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 12px;
+                font-weight: {Theme.FONT_WEIGHT_REGULAR};
+                margin-top: 48px;
+            }}
+        """)
+        layout.addWidget(shortcuts)
+
         return page
 
-    def _build_source_dock(self):
-        dock = QDockWidget("Library", self)
-        dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
-        container = QWidget()
-        layout = QVBoxLayout(container)
-
-        source_group = QGroupBox("Current Source")
-        source_layout = QVBoxLayout(source_group)
+    def _init_legacy_widgets(self):
+        """
+        Create stub widgets that were previously in dock panels and status bar.
+        These are kept temporarily to avoid breaking existing code.
+        Will be removed once popover is fully integrated.
+        """
+        # Legacy widgets from source dock (hidden)
         self.source_summary_label = QLabel("No source loaded")
-        self.source_summary_label.setWordWrap(True)
-        source_layout.addWidget(self.source_summary_label)
-        layout.addWidget(source_group)
-
-        workflow_group = QGroupBox("Next Actions")
-        workflow_layout = QVBoxLayout(workflow_group)
-        for label, slot in (
-            ("Open Source", self._open_content_dialog),
-            ("Load Subtitles", self._open_subtitle_dialog),
-            ("Generate Subtitles", self._generate_subtitles_interactive),
-            ("Queued Cards", self._show_queue_dialog),
-            ("Open Data Folder", self._open_data_folder),
-        ):
-            button = QPushButton(label)
-            button.clicked.connect(slot)
-            workflow_layout.addWidget(button)
-        layout.addWidget(workflow_group)
-
-        queue_group = QGroupBox("Queue")
-        queue_layout = QVBoxLayout(queue_group)
         self.queue_summary_label = QLabel()
-        self.queue_summary_label.setWordWrap(True)
-        queue_layout.addWidget(self.queue_summary_label)
-        layout.addWidget(queue_group)
-
         self.status_summary_label = QLabel()
-        self.status_summary_label.setWordWrap(True)
-        layout.addWidget(self.status_summary_label)
-        layout.addStretch(1)
-        dock.setWidget(container)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
 
-    def _build_inspector_dock(self):
-        dock = QDockWidget("Study Inspector", self)
-        dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
-        container = QWidget()
-        layout = QVBoxLayout(container)
-
-        selection_group = QGroupBox("Selection")
-        selection_layout = QFormLayout(selection_group)
+        # Legacy widgets from inspector dock (hidden)
         self.source_header_label = QLabel("Nothing selected")
-        self.source_header_label.setWordWrap(True)
-        selection_layout.addRow("Source:", self.source_header_label)
-
         self.word_value = QLineEdit()
-        self.word_value.setPlaceholderText("Enter word or phrase to translate")
-        self.word_value.returnPressed.connect(self._translate_word_field_input)
-        selection_layout.addRow("Expression:", self.word_value)
-
         self.sentence_value = QTextEdit()
-        self.sentence_value.setReadOnly(True)
-        self.sentence_value.setFixedHeight(92)
-        selection_layout.addRow("Context:", self.sentence_value)
-
         self.translation_value = QTextEdit()
-        self.translation_value.setReadOnly(True)
-        self.translation_value.setFixedHeight(76)
-        selection_layout.addRow("Translation:", self.translation_value)
-        layout.addWidget(selection_group)
-
-        actions_group = QGroupBox("Card Actions")
-        actions_layout = QVBoxLayout(actions_group)
         self.add_now_button = QPushButton("Add Now")
-        self.add_now_button.clicked.connect(self._add_now)
         self.add_queue_button = QPushButton("Add to Queue")
-        self.add_queue_button.clicked.connect(self._add_to_queue)
         self.process_queue_button = QPushButton("Process Queue")
-        self.process_queue_button.clicked.connect(self._process_queue)
-        actions_layout.addWidget(self.add_now_button)
-        actions_layout.addWidget(self.add_queue_button)
-        actions_layout.addWidget(self.process_queue_button)
-        layout.addWidget(actions_group)
-
-        health_group = QGroupBox("Health")
-        health_layout = QVBoxLayout(health_group)
         self.mode_indicator_label = QLabel()
         self.subtitle_offset_label = QLabel("Subtitle Offset: +0.00s")
         self.health_label = QLabel()
-        self.mode_indicator_label.setWordWrap(True)
-        self.subtitle_offset_label.setWordWrap(True)
-        self.health_label.setWordWrap(True)
-        health_layout.addWidget(self.mode_indicator_label)
-        health_layout.addWidget(self.subtitle_offset_label)
-        health_layout.addWidget(self.health_label)
-        layout.addWidget(health_group)
 
-        layout.addStretch(1)
-        dock.setWidget(container)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
-        self._update_action_buttons()
+        # Legacy widgets from status bar (hidden)
+        self.translation_status_label = QLabel("Translation: checking...")
+        self.anki_status_label = QLabel("Anki: checking...")
+
+        # Connect legacy button signals (will be replaced by popover)
+        self.add_now_button.clicked.connect(self._add_now)
+        self.add_queue_button.clicked.connect(self._add_to_queue)
+        self.process_queue_button.clicked.connect(self._process_queue)
+        self.word_value.returnPressed.connect(self._translate_word_field_input)
 
     def _build_pdf_page(self):
+        """Build PDF page with centered reading column layout."""
         page = QWidget()
-        layout = QVBoxLayout(page)
-        self.page_info_label = QLabel("No PDF loaded")
-        layout.addWidget(self.page_info_label)
+        page.setStyleSheet(f"QWidget {{ background-color: {Theme.BG}; }}")
 
-        controls = QHBoxLayout()
-        controls.addWidget(QLabel("Page:"))
-        self.page_input = QLineEdit()
-        self.page_input.setMaximumWidth(90)
-        self.page_input.setValidator(QIntValidator(1, 1, self))
-        self.page_input.returnPressed.connect(self._go_to_page)
-        controls.addWidget(self.page_input)
-        go_button = QPushButton("Go")
-        go_button.clicked.connect(self._go_to_page)
-        controls.addWidget(go_button)
-        for label, slot in (("Zoom In", self._zoom_in), ("Zoom Out", self._zoom_out), ("Fit Width", self._fit_width)):
-            button = QPushButton(label)
-            button.clicked.connect(slot)
-            controls.addWidget(button)
-        controls.addStretch(1)
-        layout.addLayout(controls)
+        # Overall layout: vertical stack
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
 
+        # Main horizontal layout: spacer | reading column | spacer | chapter rail
+        main_layout = QHBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Left spacer
+        main_layout.addStretch(1)
+
+        # Central reading column (600px fixed width)
+        reading_column = QWidget()
+        reading_column.setFixedWidth(Theme.READING_COLUMN_WIDTH)
+        column_layout = QVBoxLayout(reading_column)
+        column_layout.setContentsMargins(36, 36, 36, 36)
+        column_layout.setSpacing(0)
+
+        # PDF scroll area
         self.pdf_label = ClickablePdfLabel()
         self.pdf_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.pdf_label.clicked.connect(self._on_pdf_click)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(False)
         self.scroll_area.setWidget(self.pdf_label)
-        layout.addWidget(self.scroll_area)
+        self.scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                border: none;
+                background-color: {Theme.BG};
+            }}
+        """)
+        column_layout.addWidget(self.scroll_area)
 
-        nav_row = QHBoxLayout()
-        prev_button = QPushButton("Previous Page")
-        next_button = QPushButton("Next Page")
-        prev_button.clicked.connect(self._prev_page)
-        next_button.clicked.connect(self._next_page)
-        nav_row.addWidget(prev_button)
-        nav_row.addWidget(next_button)
-        nav_row.addStretch(1)
-        layout.addLayout(nav_row)
+        main_layout.addWidget(reading_column)
+
+        # Right spacer
+        main_layout.addStretch(1)
+
+        # Chapter rail (48px, right edge)
+        self.chapter_rail = ChapterRail()
+        self.chapter_rail.chapter_clicked.connect(self._on_chapter_clicked)
+        main_layout.addWidget(self.chapter_rail)
+
+        page_layout.addLayout(main_layout)
+
+        # Status bar at bottom
+        self.pdf_status_bar = PDFStatusBar()
+        page_layout.addWidget(self.pdf_status_bar)
+
+        # Keep page_input for programmatic use (hidden from UI)
+        self.page_input = QLineEdit()
+        self.page_input.setValidator(QIntValidator(1, 1, self))
+        self.page_input.setVisible(False)
+
+        # Page info label (legacy, hidden)
+        self.page_info_label = QLabel("No PDF loaded")
+        self.page_info_label.setVisible(False)
+
         return page
 
     def _build_video_page(self):
+        """Build video page with full-bleed layout and overlay subtitles."""
         page = QWidget()
+        page.setStyleSheet(f"QWidget {{ background-color: black; }}")
+
+        # Use absolute positioning for overlays
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Full-bleed video widget
         self.video_widget = QVideoWidget(page)
         self.video_widget.setMinimumHeight(480)
         layout.addWidget(self.video_widget, stretch=1)
 
-        controls = QHBoxLayout()
-        self.play_pause_button = QPushButton("Play")
-        self.play_pause_button.clicked.connect(self._toggle_play_pause)
-        self.position_slider = QSlider(Qt.Orientation.Horizontal)
-        self.position_slider.setRange(0, 0)
-        self.position_slider.sliderPressed.connect(self._on_slider_pressed)
-        self.position_slider.sliderReleased.connect(self._on_slider_released)
-        self.position_slider.sliderMoved.connect(self._on_slider_moved)
-        self.time_label = QLabel("00:00 / 00:00")
-        controls.addWidget(self.play_pause_button)
-        controls.addWidget(self.position_slider, stretch=1)
-        controls.addWidget(self.time_label)
-        layout.addLayout(controls)
-
-        video_tools = QHBoxLayout()
-        for label, slot in (
-            ("Load Subtitles", self._open_subtitle_dialog),
-            ("Generate Subtitles", self._generate_subtitles_interactive),
-            ("-5s", lambda: self._seek_relative(-5000)),
-            ("+5s", lambda: self._seek_relative(5000)),
-            ("Subs -0.25s", lambda: self._adjust_subtitle_offset(-250)),
-            ("Subs +0.25s", lambda: self._adjust_subtitle_offset(250)),
-        ):
-            button = QPushButton(label)
-            button.clicked.connect(slot)
-            video_tools.addWidget(button)
-        video_tools.addStretch(1)
-        layout.addLayout(video_tools)
-
-        self.subtitle_label = ClickableSubtitleLabel(page)
-        self.subtitle_label.setFixedHeight(96)
+        # Subtitle overlay (positioned at bottom, above transport bar)
+        self.subtitle_label = ClickableSubtitleLabel(page, vocabulary_seen=self.analytics_vocabulary)
+        self.subtitle_label.setFixedHeight(80)
         self.subtitle_label.clicked.connect(self._on_subtitle_click)
+        self.subtitle_label.setStyleSheet("""
+            ClickableSubtitleLabel {
+                background-color: transparent;
+            }
+        """)
         layout.addWidget(self.subtitle_label)
 
+        # Transport bar with full controls
+        self.transport_bar = TransportBar()
+        self.transport_bar.play_pause_clicked.connect(self._toggle_play_pause)
+        self.transport_bar.replay_clicked.connect(self._replay_subtitle)
+        self.transport_bar.slider_pressed.connect(self._on_slider_pressed)
+        self.transport_bar.slider_released.connect(self._on_slider_released)
+        self.transport_bar.slider_moved.connect(self._on_slider_moved)
+        self.transport_bar.speed_changed.connect(self._on_speed_changed)
+        self.transport_bar.volume_slider.valueChanged.connect(self._on_volume_changed)
+        layout.addWidget(self.transport_bar)
+
+        # Keep references for backward compatibility
+        self.play_pause_button = self.transport_bar.play_pause_button
+        self.position_slider = self.transport_bar.position_slider
+        self.time_label = self.transport_bar.time_label
+
+        # Media player setup
         self.media_player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.media_player.setAudioOutput(self.audio_output)
@@ -577,28 +713,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.media_player.positionChanged.connect(self._on_position_changed)
         self.media_player.durationChanged.connect(self._on_duration_changed)
         self.media_player.playbackStateChanged.connect(self._on_playback_state_changed)
+
         return page
 
-    def _add_menu_action(self, menu, text, slot, shortcut=None):
-        action = QAction(text, self)
-        action.triggered.connect(slot)
-        if shortcut:
-            action.setShortcut(QKeySequence(shortcut))
-            self.addAction(action)
-        menu.addAction(action)
-        return action
-
-    def _add_toolbar_menu_button(self, toolbar, title, menu):
-        button = QToolButton(toolbar)
-        button.setText(title)
-        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        button.setMenu(menu)
-        toolbar.addWidget(button)
-        return button
 
     def _set_status(self, message, timeout_ms=4000):
-        self.statusBar().showMessage(message, timeout_ms)
+        """Update status message (legacy method)."""
         self.status_summary_label.setText(message)
+        # TODO: Show message in a toast notification or status area
 
     def _open_data_folder(self):
         subprocess.Popen(["explorer", str(DATA_ROOT)])
@@ -742,6 +864,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._request_translation(text)
 
     def _update_selection_panel(self):
+        """Update legacy selection panel and show translation popover."""
+        # Update legacy widgets (for backward compatibility)
         if self.word_value.text() != self.selected_word:
             self.word_value.setText(self.selected_word)
         self.sentence_value.setText(self.selected_sentence)
@@ -752,6 +876,10 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             )
         else:
             self.source_header_label.setText("Nothing selected")
+
+        # Update and show popover if we have a selection
+        if self.selected_word and self.selected_translation:
+            self._show_translation_popover()
 
     def _update_action_buttons(self):
         has_selection = bool(self.selected_word)
@@ -767,6 +895,102 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.selected_translation = ""
         self._update_selection_panel()
         self._update_action_buttons()
+        # Close popover if open
+        if self.translation_popover.isVisible():
+            self.translation_popover.close()
+
+    def _show_translation_popover(self):
+        """Show translation popover near the selected word."""
+        # Only show if we have valid translation
+        if not self.selected_translation or self.selected_translation.startswith("Translation error:"):
+            return
+
+        # Set popover content
+        self.translation_popover.set_content(
+            word=self.selected_word,
+            meaning=self.selected_translation,
+            sentence=self.selected_sentence,
+            sentence_translation="",  # TODO: Get sentence translation if available
+            metadata=""  # TODO: Add POS/IPA if available
+        )
+
+        # Position near the clicked word
+        # For PDF: use highlight_bboxes to get word position
+        # For video: use subtitle label position
+        if self.current_source_type == "pdf" and self.highlight_bboxes:
+            # Get first bbox and convert to global coordinates
+            bbox = self.highlight_bboxes[0]
+            x_screen = int(bbox[0] * self.zoom_factor)
+            y_screen = int(bbox[1] * self.zoom_factor)
+
+            # Convert from PDF label coordinates to global screen coordinates
+            pdf_point = self.pdf_label.mapToGlobal(QPoint(x_screen, y_screen))
+            word_rect = QRect(
+                pdf_point.x(),
+                pdf_point.y(),
+                int((bbox[2] - bbox[0]) * self.zoom_factor),
+                int((bbox[3] - bbox[1]) * self.zoom_factor)
+            )
+            self.translation_popover.position_near_word(word_rect)
+            self.translation_popover.show_animated()
+
+        elif self.current_source_type == "video":
+            # Position near subtitle label
+            subtitle_global_pos = self.subtitle_label.mapToGlobal(QPoint(0, 0))
+            word_rect = QRect(
+                subtitle_global_pos.x() + self.subtitle_label.width() // 2 - 50,
+                subtitle_global_pos.y(),
+                100,
+                self.subtitle_label.height()
+            )
+            self.translation_popover.position_near_word(word_rect)
+            self.translation_popover.show_animated()
+
+    def _on_popover_edit_requested(self):
+        """Handle edit request from popover."""
+        # TODO: Implement edit flow - expand popover or show edit dialog
+        pass
+
+    def _on_popover_closed(self):
+        """Handle popover close event."""
+        # Optionally clear selection or keep it
+        pass
+
+    def _close_popover(self):
+        """Close the translation popover if visible."""
+        if self.translation_popover.isVisible():
+            self.translation_popover.close()
+
+    def _update_command_bar_stats(self):
+        """Update the stats chip in the command bar."""
+        total_count = len(self.analytics_vocabulary)
+        # TODO: Calculate today_count when we add timestamps to vocabulary
+        today_count = 0
+        self.command_bar.set_stats(today_count, total_count)
+
+    def _on_chapter_clicked(self, page_number):
+        """Navigate to a chapter when clicked in the chapter rail."""
+        if self.doc and 1 <= page_number <= self.doc.page_count:
+            self.current_page_index = page_number - 1
+            self.highlight_bboxes = []
+            self._clear_selection_state()
+            self._render_current_page()
+            self._persist_session()
+
+    def _replay_subtitle(self):
+        """Jump to the start of the current subtitle."""
+        if self.current_subtitle:
+            self.media_player.setPosition(self.current_subtitle.start_ms)
+
+    def _on_speed_changed(self, speed: float):
+        """Handle playback speed change."""
+        if self.media_player:
+            self.media_player.setPlaybackRate(speed)
+
+    def _on_volume_changed(self, value: int):
+        """Handle volume change (0-100)."""
+        if self.audio_output:
+            self.audio_output.setVolume(value / 100.0)
 
     def _clean_word(self, value):
         start = 0
@@ -820,6 +1044,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.analytics_vocabulary.update(token.lower() for token in re.findall(r"\b\w+\b", word_text, flags=re.UNICODE))
         analytics["vocabulary_seen"] = sorted(self.analytics_vocabulary)
         save_user_data(self.user_data)
+
+        # Update UI to reflect new vocabulary state
+        self.subtitle_label.set_vocabulary_seen(self.analytics_vocabulary)
+        self._update_command_bar_stats()
+
+        # Re-render PDF to update word highlighting
+        if self.doc and self.current_source_type == "pdf":
+            self._render_current_page()
 
     def _queue_payload(self):
         return {
@@ -923,6 +1155,21 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._persist_session()
         self._set_status(f"Opened PDF: {Path(path).name}")
 
+        # Update command bar
+        self.command_bar.set_title(
+            Path(path).name,
+            f"{self.doc.page_count} pages"
+        )
+        self.command_bar.set_mode("pdf")
+        self._update_command_bar_stats()
+
+        # Update chapter rail with PDF outline
+        try:
+            toc = self.doc.get_toc()
+            self.chapter_rail.set_chapters(toc, self.doc.page_count)
+        except Exception:
+            self.chapter_rail.set_chapters([], self.doc.page_count)
+
     def _render_current_page(self):
         if not self.doc:
             self.page_info_label.setText("No PDF loaded")
@@ -932,26 +1179,59 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         matrix = fitz.Matrix(self.zoom_factor, self.zoom_factor)
         pix = page.get_pixmap(matrix=matrix, alpha=False)
         image = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
-        if self.highlight_bboxes:
-            painter = QPainter(image)
-            painter.setPen(QPen(Qt.GlobalColor.red, 2))
-            for x0, y0, x1, y1 in self.highlight_bboxes:
-                painter.drawRect(
-                    int(x0 * self.zoom_factor),
-                    int(y0 * self.zoom_factor),
-                    max(1, int((x1 - x0) * self.zoom_factor)),
-                    max(1, int((y1 - y0) * self.zoom_factor)),
-                )
-            painter.end()
 
-        pixmap = QPixmap.fromImage(image)
-        self.pdf_label.setPixmap(pixmap)
-        self.pdf_label.resize(pixmap.size())
+        # Get words before painting
         self.page_words = page.get_text("words")
         self.page_word_order = sorted(
             self.page_words,
             key=lambda w: (int(w[5]), int(w[6]), int(w[7]), float(w[1]), float(w[0])),
         )
+
+        # Draw word highlights
+        painter = QPainter(image)
+
+        # 1. Draw seen/new state highlights for all words
+        for word_obj in self.page_words:
+            x0, y0, x1, y1, text = word_obj[0:5]
+
+            # Clean the word text for vocabulary lookup
+            cleaned_text = self._clean_word(text)
+            if not cleaned_text:
+                continue
+
+            # Check if word is in vocabulary (seen state)
+            is_seen = cleaned_text.lower() in self.analytics_vocabulary
+
+            # Choose color based on state
+            if is_seen:
+                color = Theme.to_qcolor(Theme.HL_SEEN)
+            else:
+                color = Theme.to_qcolor(Theme.HL_NEW)
+
+            # Draw background rectangle
+            rect_x = int(x0 * self.zoom_factor)
+            rect_y = int(y0 * self.zoom_factor)
+            rect_w = max(1, int((x1 - x0) * self.zoom_factor))
+            rect_h = max(1, int((y1 - y0) * self.zoom_factor))
+
+            painter.fillRect(rect_x, rect_y, rect_w, rect_h, color)
+
+        # 2. Draw selection highlight on top (for currently selected word)
+        if self.highlight_bboxes:
+            selection_color = Theme.to_qcolor(Theme.HL_SELECTED)
+            for x0, y0, x1, y1 in self.highlight_bboxes:
+                rect_x = int(x0 * self.zoom_factor)
+                rect_y = int(y0 * self.zoom_factor)
+                rect_w = max(1, int((x1 - x0) * self.zoom_factor))
+                rect_h = max(1, int((y1 - y0) * self.zoom_factor))
+                painter.fillRect(rect_x, rect_y, rect_w, rect_h, selection_color)
+
+        painter.end()
+
+        pixmap = QPixmap.fromImage(image)
+        self.pdf_label.setPixmap(pixmap)
+        self.pdf_label.resize(pixmap.size())
+
         self.page_word_index = {self._word_key(word): idx for idx, word in enumerate(self.page_word_order)}
         self.page_line_words = self._build_line_index(self.page_words)
         self.page_info_label.setText(
@@ -960,6 +1240,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.page_input.setText(str(self.current_page_index + 1))
         self.current_source_location = f"Page {self.current_page_index + 1}"
         self._update_source_summary()
+
+        # Update chapter rail
+        self.chapter_rail.set_current_page(self.current_page_index + 1)
 
     def _build_line_index(self, words):
         line_map = {}
@@ -1112,6 +1395,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._persist_session()
         self._set_status(f"Loaded video: {Path(path).name}")
 
+        # Update command bar
+        self.command_bar.set_title(
+            Path(path).name,
+            "Video"
+        )
+        self.command_bar.set_mode("video")
+        self._update_command_bar_stats()
+
     def _load_subtitles(self, srt_path):
         try:
             self.subtitle_parser = SRTParser.from_file(srt_path)
@@ -1180,9 +1471,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _on_position_changed(self, position):
         if not self._is_slider_dragging:
-            self.position_slider.setValue(position)
+            self.transport_bar.set_position(position)
         duration = self.media_player.duration()
-        self.time_label.setText(f"{self._fmt_ms(position)} / {self._fmt_ms(duration)}")
+        self.transport_bar.set_time(position, duration)
         self.current_source_location = self._fmt_ms(position)
         self.subtitle_offset_label.setText(f"Subtitle Offset: {self.subtitle_offset_ms / 1000.0:+.2f}s")
         self._refresh_subtitle_for_position(position)
@@ -1207,12 +1498,12 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             self.subtitle_label.set_subtitle(subtitle)
 
     def _on_duration_changed(self, duration):
-        self.position_slider.setRange(0, max(0, duration))
-        self.time_label.setText(f"00:00 / {self._fmt_ms(duration)}")
+        self.transport_bar.set_duration(max(0, duration))
+        self.transport_bar.set_time(0, duration)
 
     def _on_playback_state_changed(self, state):
         is_playing = self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-        self.play_pause_button.setText("Pause" if is_playing else "Play")
+        self.transport_bar.set_play_state(is_playing)
 
     def _toggle_play_pause(self):
         if self.workspace_stack.currentWidget() != self.video_page:

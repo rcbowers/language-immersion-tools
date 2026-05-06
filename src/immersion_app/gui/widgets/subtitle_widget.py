@@ -5,6 +5,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QTextCharFormat, QTextLayout, QTextOption
 from PySide6.QtWidgets import QLabel
 
+from immersion_app.gui.theme import Theme
+
 """
 COORDINATE SYSTEM OVERVIEW:
 
@@ -50,12 +52,13 @@ class ClickableSubtitleLabel(QLabel):
     debug_clicked = Signal(object)
     layout_updated = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, vocabulary_seen=None):
         super().__init__(parent)
         self._subtitle = None
         self._raw_text = ""
         self._words = []
         self._highlighted_indices = set()
+        self._vocabulary_seen = vocabulary_seen or set()
         self._layout = None
         self._word_rects = []
         self._layout_dirty = True
@@ -66,6 +69,12 @@ class ClickableSubtitleLabel(QLabel):
 
         self.setContentsMargins(10, 10, 10, 10)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+    def set_vocabulary_seen(self, vocabulary_seen: set):
+        """Update the vocabulary seen set for word state highlighting."""
+        self._vocabulary_seen = vocabulary_seen
+        self._invalidate_layout()
+        self.update()
 
     def set_subtitle(self, subtitle):
         self._subtitle = subtitle
@@ -313,7 +322,17 @@ class ClickableSubtitleLabel(QLabel):
         return True
 
     def _build_format_ranges(self):
+        """
+        Build format ranges for word highlighting with state-based colors.
+
+        States:
+        - Selected: Currently clicked word (Theme.HL_SELECTED with white text)
+        - Seen: Previously added to vocabulary (Theme.HL_SEEN)
+        - New: Never seen before (Theme.HL_NEW)
+        """
         ranges = []
+
+        # Base format: white text
         if self._raw_text:
             base_format = QTextCharFormat()
             base_format.setForeground(QColor("white"))
@@ -323,20 +342,39 @@ class ClickableSubtitleLabel(QLabel):
             base_range.format = base_format
             ranges.append(base_range)
 
-        for index in sorted(self._highlighted_indices):
-            if index < 0 or index >= len(self._words):
-                continue
-            word = self._words[index]
+        # Apply highlighting to all words based on state
+        for index, word in enumerate(self._words):
             if word.end <= word.start:
                 continue
+
             text_format = QTextCharFormat()
-            text_format.setBackground(QColor("yellow"))
-            text_format.setForeground(QColor("black"))
+            is_selected = index in self._highlighted_indices
+
+            if is_selected:
+                # Selected word: bright accent background with white text
+                text_format.setBackground(Theme.to_qcolor(Theme.HL_SELECTED))
+                text_format.setForeground(QColor("white"))
+            else:
+                # Determine if word is seen or new
+                word_text = self._raw_text[word.start:word.end].strip().lower()
+                # Clean punctuation for vocabulary lookup
+                cleaned_text = ''.join(c for c in word_text if c.isalpha() or c.isdigit() or c == '_')
+
+                if cleaned_text and cleaned_text in self._vocabulary_seen:
+                    # Seen word
+                    text_format.setBackground(Theme.to_qcolor(Theme.HL_SEEN))
+                    text_format.setForeground(QColor("white"))
+                else:
+                    # New word
+                    text_format.setBackground(Theme.to_qcolor(Theme.HL_NEW))
+                    text_format.setForeground(QColor("white"))
+
             format_range = QTextLayout.FormatRange()
             format_range.start = word.start
             format_range.length = word.end - word.start
             format_range.format = text_format
             ranges.append(format_range)
+
         return ranges
 
     def _cursor_x(self, line, cursor_pos):
