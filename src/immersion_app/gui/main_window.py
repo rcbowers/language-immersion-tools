@@ -338,6 +338,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         # Command bar at top
         self.command_bar = CommandBar()
         self.command_bar.mode_changed.connect(self._on_mode_changed)
+        self.command_bar.open_requested.connect(self._open_content_dialog)
+        self.command_bar.close_requested.connect(self._close_current_file)
         self.command_bar.settings_requested.connect(self._show_settings_dialog)
         main_layout.addWidget(self.command_bar)
 
@@ -1152,6 +1154,24 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         else:
             self._load_video(path)
 
+    def _close_current_file(self):
+        if self.media_player:
+            self.media_player.stop()
+        if self.doc:
+            self.doc.close()
+            self.doc = None
+        self.current_pdf_path = ""
+        self.current_video_path = ""
+        self.current_srt_path = ""
+        self.subtitle_parser = None
+        self.current_source_type = ""
+        self.current_source_name = ""
+        self._clear_selection_state()
+        self.workspace_stack.setCurrentWidget(self.welcome_page)
+        self.command_bar.set_title("No document loaded")
+        self.command_bar.set_file_loaded(False)
+        self._persist_session()
+
     def _load_pdf(self, path, initial_page_index=0):
         try:
             self.doc = fitz.open(path)
@@ -1180,6 +1200,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             f"{self.doc.page_count} pages"
         )
         self.command_bar.set_mode("pdf")
+        self.command_bar.set_file_loaded(True)
         self._update_command_bar_stats()
 
         # Update chapter rail with PDF outline
@@ -1450,6 +1471,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             "Video"
         )
         self.command_bar.set_mode("video")
+        self.command_bar.set_file_loaded(True)
         self._update_command_bar_stats()
 
     def _load_subtitles(self, srt_path):

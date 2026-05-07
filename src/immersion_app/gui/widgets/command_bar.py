@@ -159,6 +159,8 @@ class CommandBar(QWidget):
     """
 
     mode_changed = Signal(str)  # "pdf" or "video"
+    open_requested = Signal()
+    close_requested = Signal()
     search_requested = Signal()
     settings_requested = Signal()
 
@@ -180,9 +182,26 @@ class CommandBar(QWidget):
         # Separator
         layout.addSpacing(8)
 
+        # Open button (always visible)
+        self.open_button = QPushButton("Open...")
+        self.open_button.setFixedHeight(28)
+        self.open_button.setStyleSheet(Theme.get_button_style("secondary"))
+        self.open_button.clicked.connect(self.open_requested.emit)
+        layout.addWidget(self.open_button)
+
+        layout.addSpacing(8)
+
         # Title and subtitle
         self.title_widget = TitleWidget()
         layout.addWidget(self.title_widget)
+
+        # Close button (hidden until a file is loaded)
+        self.close_button = QPushButton("×")
+        self.close_button.setFixedSize(24, 24)
+        self.close_button.setStyleSheet(Theme.get_button_style("ghost"))
+        self.close_button.setVisible(False)
+        self.close_button.clicked.connect(self.close_requested.emit)
+        layout.addWidget(self.close_button)
 
         # Spacer
         layout.addStretch()
@@ -221,3 +240,7 @@ class CommandBar(QWidget):
     def set_mode(self, mode: str):
         """Set the active mode."""
         self.mode_pills.set_active_mode(mode)
+
+    def set_file_loaded(self, loaded: bool):
+        """Show or hide the close button based on whether a file is loaded."""
+        self.close_button.setVisible(loaded)
