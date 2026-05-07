@@ -3,6 +3,7 @@
 
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -84,6 +85,17 @@ class SubtitleWidgetTests(unittest.TestCase):
         self.assertAlmostEqual(target_rect.left(), min(start_x, end_x), places=2)
         self.assertAlmostEqual(target_rect.width(), abs(end_x - start_x), places=2)
 
+    def test_selection_anchor_rect_spans_first_visual_line(self):
+        subtitle = SRTParser.from_text(
+            "1\n00:00:00,000 --> 00:00:02,000\nuno dos tres cuatro cinco seis siete ocho nueve diez"
+        ).subtitles[0]
+        widget = self._make_widget(subtitle, width=180, height=140)
+        anchor = widget.selection_anchor_rect(0, 4)
+        first_rect = widget._word_rects[0][0]
+        self.assertFalse(anchor.isNull())
+        self.assertEqual(anchor.top(), int(first_rect.top()))
+        self.assertLessEqual(anchor.left(), int(first_rect.left()))
+
 
 class UnifiedSelectionTests(unittest.TestCase):
     def _make_selection_stub(self):
@@ -102,7 +114,36 @@ class UnifiedSelectionTests(unittest.TestCase):
         stub.selected_translation = ""
         stub.current_source_name = ""
         stub.current_source_location = ""
+        stub.selected_subtitle_indices = []
+        stub.selected_pdf_words = []
+        stub.translation_popover = type("_Popover", (), {"isVisible": lambda self: False, "close": lambda self: None})()
+        stub._close_popover = lambda: None
         return stub
+
+    def _make_add_stub(self):
+        window = self._make_selection_stub()
+        window.selected_word = "hola"
+        window.selected_sentence = "hola mundo"
+        window.selected_translation = "hello"
+        window.current_source_type = "video"
+        window.current_source_name = "clip.mp4"
+        window.current_source_location = "00:01"
+        window.is_anki_connected = True
+        window.sentence_counts = {}
+        window.status_messages = []
+        window.queued_refreshes = 0
+        window.recorded_words = []
+        window._set_status = lambda message, timeout_ms=4000: window.status_messages.append(message)
+        window._refresh_queue_summary = lambda: setattr(window, "queued_refreshes", window.queued_refreshes + 1)
+        window._record_successful_card_add = window.recorded_words.append
+        window._queue_payload = UnifiedSentenceMinerWindow._queue_payload.__get__(window, UnifiedSentenceMinerWindow)
+        window._build_note_sentence = UnifiedSentenceMinerWindow._build_note_sentence.__get__(
+            window, UnifiedSentenceMinerWindow
+        )
+        window._queue_current_selection_for_later = UnifiedSentenceMinerWindow._queue_current_selection_for_later.__get__(
+            window, UnifiedSentenceMinerWindow
+        )
+        return window
 
     def test_subtitle_click_uses_parsed_words(self):
         subtitle = SRTParser.from_text("1\n00:00:00,000 --> 00:00:02,000\nhola, mundo cruel.").subtitles[0]
@@ -114,6 +155,8 @@ class UnifiedSelectionTests(unittest.TestCase):
         window.selected_translation = ""
         window.current_source_type = "video"
         window.current_source_location = "00:00"
+        window.selected_subtitle_indices = []
+        window.selected_pdf_words = []
         window._clean_word = lambda value: value.strip()
         window._update_selection_panel = lambda: None
         window._update_action_buttons = lambda: None
@@ -174,6 +217,78 @@ class UnifiedSelectionTests(unittest.TestCase):
         UnifiedSentenceMinerWindow._update_action_buttons(window)
         self.assertTrue(window.add_now_button.isEnabled())
         self.assertTrue(window.add_queue_button.isEnabled())
+
+    def test_add_now_adds_directly_when_anki_connected(self):
+        window = self._make_add_stub()
+        with (
+            patch("immersion_app.gui.main_window.add_anki_card", return_value=1234) as add_card,
+            patch("immersion_app.gui.main_window.append_queue_entry") as append_queue,
+        ):
+            UnifiedSentenceMinerWindow._add_now(window)
+
+        add_card.assert_called_once_with("hola mundo", "hola", "hello")
+        append_queue.assert_not_called()
+        self.assertEqual(window.recorded_words, ["hola"])
+        self.assertEqual(window.queued_refreshes, 0)
+        self.assertIn("Added card to Anki (Note ID: 1234)", window.status_messages)
+
+    def test_add_now_queues_when_anki_precheck_is_disconnected(self):
+        window = self._make_add_stub()
+        window.is_anki_connected = False
+        with (
+            patch("immersion_app.gui.main_window.append_queue_entry") as append_queue,
+            patch("immersion_app.gui.main_window.QMessageBox.information") as info_box,
+            patch("immersion_app.gui.main_window.QMessageBox.critical") as critical_box,
+            patch("immersion_app.gui.main_window.add_anki_card") as add_card,
+        ):
+            UnifiedSentenceMinerWindow._add_now(window)
+
+        add_card.assert_not_called()
+        append_queue.assert_called_once()
+        queued_entry = append_queue.call_args.args[0]
+        self.assertEqual(queued_entry["word"], "hola")
+        self.assertEqual(queued_entry["translation"], "hello")
+        self.assertEqual(window.recorded_words, [])
+        self.assertEqual(window.queued_refreshes, 1)
+        info_box.assert_called_once()
+        critical_box.assert_not_called()
+
+    def test_add_now_queues_when_connection_drops_during_add(self):
+        window = self._make_add_stub()
+        with (
+            patch(
+                "immersion_app.gui.main_window.add_anki_card",
+                side_effect=ConnectionError("Failed to connect to AnkiConnect"),
+            ) as add_card,
+            patch("immersion_app.gui.main_window.append_queue_entry") as append_queue,
+            patch("immersion_app.gui.main_window.QMessageBox.information") as info_box,
+            patch("immersion_app.gui.main_window.QMessageBox.critical") as critical_box,
+        ):
+            UnifiedSentenceMinerWindow._add_now(window)
+
+        add_card.assert_called_once_with("hola mundo", "hola", "hello")
+        append_queue.assert_called_once()
+        self.assertEqual(window.recorded_words, [])
+        self.assertEqual(window.queued_refreshes, 1)
+        info_box.assert_called_once()
+        critical_box.assert_not_called()
+
+    def test_add_now_keeps_non_connection_errors_visible(self):
+        window = self._make_add_stub()
+        with (
+            patch("immersion_app.gui.main_window.add_anki_card", side_effect=RuntimeError("deck missing")) as add_card,
+            patch("immersion_app.gui.main_window.append_queue_entry") as append_queue,
+            patch("immersion_app.gui.main_window.QMessageBox.information") as info_box,
+            patch("immersion_app.gui.main_window.QMessageBox.critical") as critical_box,
+        ):
+            UnifiedSentenceMinerWindow._add_now(window)
+
+        add_card.assert_called_once_with("hola mundo", "hola", "hello")
+        append_queue.assert_not_called()
+        info_box.assert_not_called()
+        critical_box.assert_called_once()
+        self.assertEqual(window.recorded_words, [])
+        self.assertEqual(window.queued_refreshes, 0)
 
 
 if __name__ == "__main__":

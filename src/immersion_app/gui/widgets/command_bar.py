@@ -1,7 +1,7 @@
 """
 Command bar widget for the top of the application.
 
-Provides mode switching, document title, stats, search, and settings access.
+Provides mode switching, document title, stats, and settings access.
 """
 
 from PySide6.QtCore import Qt, Signal
@@ -151,19 +151,20 @@ class StatsChip(QLabel):
 
     def update_stats(self, today_count: int, total_count: int):
         """Update the stats display."""
-        self.setText(f"✨ {today_count} today · {total_count} total")
+        self.setText(f"âœ¨ {today_count} today Â· {total_count} total")
 
 
 class CommandBar(QWidget):
     """
-    Top command bar with mode switcher, title, stats, search, and settings.
+    Top command bar with mode switcher, title, stats, and settings.
     """
 
     mode_changed = Signal(str)  # "pdf" or "video"
     open_requested = Signal()
     close_requested = Signal()
-    search_requested = Signal()
     settings_requested = Signal()
+    previous_page_requested = Signal()
+    next_page_requested = Signal()
     page_jump_requested = Signal(int)  # 1-based page number
 
     def __init__(self, parent=None):
@@ -172,10 +173,12 @@ class CommandBar(QWidget):
         self._total_pages = 0
         self.setFixedHeight(Theme.COMMAND_BAR_HEIGHT)
         self._apply_background()
+        self.setSizePolicy(self.sizePolicy().horizontalPolicy(), self.sizePolicy().verticalPolicy())
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 0, 16, 0)
+        layout.setContentsMargins(16, 8, 16, 8)
         layout.setSpacing(16)
+        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         # Left: Mode pills
         self.mode_pills = ModePillGroup()
@@ -187,7 +190,7 @@ class CommandBar(QWidget):
 
         # Open button (always visible)
         self.open_button = QPushButton("Open...")
-        self.open_button.setFixedHeight(28)
+        self.open_button.setFixedHeight(32)
         self.open_button.setStyleSheet(Theme.get_button_style("secondary"))
         self.open_button.clicked.connect(self.open_requested.emit)
         layout.addWidget(self.open_button)
@@ -199,7 +202,7 @@ class CommandBar(QWidget):
         layout.addWidget(self.title_widget)
 
         # Close button (hidden until a file is loaded)
-        self.close_button = QPushButton("×")
+        self.close_button = QPushButton("Ã—")
         self.close_button.setFixedSize(24, 24)
         self.close_button.setStyleSheet(Theme.get_button_style("ghost"))
         self.close_button.setVisible(False)
@@ -209,9 +212,16 @@ class CommandBar(QWidget):
         # Spacer
         layout.addStretch()
 
-        # Page navigation: [current] / [total]
+        # Page navigation: [<] [current] [>]
+        self.page_prev_button = QPushButton("<")
+        self.page_prev_button.setFixedSize(28, 28)
+        self.page_prev_button.setStyleSheet(Theme.get_button_style("ghost"))
+        self.page_prev_button.clicked.connect(self.previous_page_requested.emit)
+        self.page_prev_button.setVisible(False)
+
         self.page_current_input = QLineEdit()
         self.page_current_input.setFixedWidth(44)
+        self.page_current_input.setFixedHeight(28)
         self.page_current_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.page_current_input.setStyleSheet(f"""
             QLineEdit {{
@@ -231,46 +241,23 @@ class CommandBar(QWidget):
         self.page_current_input.returnPressed.connect(self._on_page_input_committed)
         self.page_current_input.setVisible(False)
 
-        self.page_separator = QLabel("/")
-        self.page_separator.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.TEXT_MUTED};
-                font-family: {Theme.FONT_MONO};
-                font-size: 12px;
-                padding: 0 2px;
-            }}
-        """)
-        self.page_separator.setVisible(False)
+        self.page_next_button = QPushButton(">")
+        self.page_next_button.setFixedSize(28, 28)
+        self.page_next_button.setStyleSheet(Theme.get_button_style("ghost"))
+        self.page_next_button.clicked.connect(self.next_page_requested.emit)
+        self.page_next_button.setVisible(False)
 
-        self.page_total_label = QLabel("0")
-        self.page_total_label.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.TEXT_MUTED};
-                font-family: {Theme.FONT_MONO};
-                font-size: 12px;
-            }}
-        """)
-        self.page_total_label.setVisible(False)
-
+        layout.addWidget(self.page_prev_button)
         layout.addWidget(self.page_current_input)
-        layout.addWidget(self.page_separator)
-        layout.addWidget(self.page_total_label)
+        layout.addWidget(self.page_next_button)
         layout.addSpacing(8)
 
         # Stats chip
         self.stats_chip = StatsChip()
         layout.addWidget(self.stats_chip)
 
-        # Search field (stub for now)
-        self.search_field = QLineEdit()
-        self.search_field.setPlaceholderText("Search ⌘K")
-        self.search_field.setFixedWidth(180)
-        self.search_field.setStyleSheet(Theme.get_input_style())
-        self.search_field.returnPressed.connect(self.search_requested.emit)
-        layout.addWidget(self.search_field)
-
         # Settings button
-        self.settings_button = QPushButton("⚙")
+        self.settings_button = QPushButton("âš™")
         self.settings_button.setFixedSize(32, 32)
         self.settings_button.setStyleSheet(Theme.get_button_style("ghost"))
         self.settings_button.clicked.connect(self.settings_requested.emit)
@@ -297,21 +284,25 @@ class CommandBar(QWidget):
         self.close_button.setVisible(loaded)
 
     def set_page_info(self, current: int, total: int):
-        """Show/update page counter. Pass total=0 to hide."""
+        """Show/update PDF page controls. Pass total=0 to hide."""
         visible = total > 0
+        self.page_prev_button.setVisible(visible)
         self.page_current_input.setVisible(visible)
-        self.page_separator.setVisible(visible)
-        self.page_total_label.setVisible(visible)
+        self.page_next_button.setVisible(visible)
+        self._total_pages = total
         if visible:
-            self._total_pages = total
             self.page_current_input.setValidator(QIntValidator(1, total, self))
             self.page_current_input.setText(str(current))
-            self.page_total_label.setText(str(total))
+            self.page_prev_button.setEnabled(current > 1)
+            self.page_next_button.setEnabled(current < total)
+        else:
+            self.page_current_input.clear()
 
     def _on_page_input_committed(self):
         text = self.page_current_input.text().strip()
-        if not text.isdigit():
+        if not text.isdigit() or self._total_pages <= 0:
             return
         page = max(1, min(int(text), self._total_pages))
+        self.page_current_input.setText(str(page))
         self.page_current_input.clearFocus()
         self.page_jump_requested.emit(page)
