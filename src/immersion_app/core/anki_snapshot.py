@@ -12,12 +12,19 @@ from .paths import ANKI_SNAPSHOT_PATH
 def load_snapshot() -> set[str]:
     try:
         data = json.loads(ANKI_SNAPSHOT_PATH.read_text(encoding="utf-8"))
-        return set(data.get("words", []))
-    except (FileNotFoundError, json.JSONDecodeError):
+        words = set(data.get("words", []))
+        print(f"[snapshot] load_snapshot: loaded {len(words)} words from {ANKI_SNAPSHOT_PATH}")
+        return words
+    except FileNotFoundError:
+        print(f"[snapshot] load_snapshot: no snapshot file found at {ANKI_SNAPSHOT_PATH}")
+        return set()
+    except json.JSONDecodeError as e:
+        print(f"[snapshot] load_snapshot: JSON parse error: {e}")
         return set()
 
 
 def save_snapshot(words: set[str]) -> None:
+    print(f"[snapshot] save_snapshot: saving {len(words)} words to {ANKI_SNAPSHOT_PATH}")
     ANKI_SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
     ANKI_SNAPSHOT_PATH.write_text(
         json.dumps(
