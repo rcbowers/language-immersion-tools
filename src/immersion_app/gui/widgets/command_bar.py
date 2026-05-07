@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QButtonGroup,
+    QSizePolicy,
 )
 
 from immersion_app.gui.theme import Theme
@@ -172,8 +173,8 @@ class CommandBar(QWidget):
 
         self._total_pages = 0
         self.setFixedHeight(Theme.COMMAND_BAR_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._apply_background()
-        self.setSizePolicy(self.sizePolicy().horizontalPolicy(), self.sizePolicy().verticalPolicy())
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 8, 16, 8)

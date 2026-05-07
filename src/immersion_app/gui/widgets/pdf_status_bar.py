@@ -1,9 +1,7 @@
-"""
-PDF status bar widget - floating bottom bar with word state legend.
-"""
+"""PDF status bar widget for word-state legend and compact controls."""
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QToolButton, QWidget, QSizePolicy
 
 from immersion_app.gui.theme import Theme
 
@@ -20,11 +18,13 @@ class PDFStatusBar(QWidget):
     zoom_in_clicked = Signal()
     fit_width_clicked = Signal()
     reset_zoom_clicked = Signal()
+    console_toggled = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
         self.setFixedHeight(Theme.STATUS_BAR_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._build_ui()
 
     def _build_ui(self):
@@ -37,8 +37,36 @@ class PDFStatusBar(QWidget):
         """)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 0, 16, 0)
-        layout.setSpacing(16)
+        layout.setContentsMargins(12, 0, 12, 0)
+        layout.setSpacing(10)
+
+        self.console_toggle_button = QToolButton()
+        self.console_toggle_button.setText(">_")
+        self.console_toggle_button.setToolTip("Show console output")
+        self.console_toggle_button.setCheckable(True)
+        self.console_toggle_button.setFixedSize(32, 24)
+        self.console_toggle_button.toggled.connect(self.console_toggled.emit)
+        self.console_toggle_button.setStyleSheet(f"""
+            QToolButton {{
+                background-color: transparent;
+                color: {Theme.TEXT_SOFT};
+                border: 1px solid transparent;
+                border-radius: 6px;
+                font-family: {Theme.FONT_MONO};
+                font-size: 12px;
+                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
+            }}
+            QToolButton:hover {{
+                background-color: {Theme.SURFACE_ALT};
+                border-color: {Theme.BORDER_STRONG};
+            }}
+            QToolButton:checked {{
+                background-color: {Theme.ACCENT_SOFT};
+                color: {Theme.ACCENT_DARK};
+                border-color: {Theme.ACCENT_BORDER};
+            }}
+        """)
+        layout.addWidget(self.console_toggle_button, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         # Legend items
         legend_items = [
@@ -60,7 +88,7 @@ class PDFStatusBar(QWidget):
                     color: white;
                 }}
             """)
-            layout.addWidget(color_box)
+            layout.addWidget(color_box, alignment=Qt.AlignmentFlag.AlignVCenter)
 
             # Label text
             text_label = QLabel(label)
@@ -72,7 +100,7 @@ class PDFStatusBar(QWidget):
                     font-weight: {Theme.FONT_WEIGHT_MEDIUM};
                 }}
             """)
-            layout.addWidget(text_label)
+            layout.addWidget(text_label, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         layout.addStretch()
 
@@ -80,7 +108,7 @@ class PDFStatusBar(QWidget):
         zoom_container = QWidget()
         zoom_layout = QHBoxLayout(zoom_container)
         zoom_layout.setContentsMargins(0, 0, 0, 0)
-        zoom_layout.setSpacing(8)
+        zoom_layout.setSpacing(4)
 
         # Zoom percentage label (clickable to reset)
         self.zoom_label = QLabel("200%")
@@ -162,7 +190,7 @@ class PDFStatusBar(QWidget):
         fit_width_btn.clicked.connect(self.fit_width_clicked.emit)
         zoom_layout.addWidget(fit_width_btn)
 
-        layout.addWidget(zoom_container)
+        layout.addWidget(zoom_container, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         # Instruction text
         instruction = QLabel("Click any word to translate · ⏎")
@@ -174,9 +202,16 @@ class PDFStatusBar(QWidget):
                 font-weight: {Theme.FONT_WEIGHT_REGULAR};
             }}
         """)
-        layout.addWidget(instruction)
+        layout.addWidget(instruction, alignment=Qt.AlignmentFlag.AlignVCenter)
 
     def set_zoom_level(self, zoom_factor: float):
         """Update the zoom percentage display."""
         percentage = int(zoom_factor * 100)
         self.zoom_label.setText(f"{percentage}%")
+
+    def set_console_visible(self, visible: bool):
+        """Sync footer toggle state with console visibility."""
+        self.console_toggle_button.blockSignals(True)
+        self.console_toggle_button.setChecked(bool(visible))
+        self.console_toggle_button.blockSignals(False)
+        self.console_toggle_button.setToolTip("Hide console output" if visible else "Show console output")

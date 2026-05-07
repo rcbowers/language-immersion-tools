@@ -133,7 +133,17 @@ class UnifiedSelectionTests(unittest.TestCase):
         window.status_messages = []
         window.queued_refreshes = 0
         window.recorded_words = []
+        window.feedback_events = []
         window._set_status = lambda message, timeout_ms=4000: window.status_messages.append(message)
+        window._show_card_feedback = lambda title, sentence, variant, note_id=None, reason="": window.feedback_events.append(
+            {
+                "title": title,
+                "sentence": sentence,
+                "variant": variant,
+                "note_id": note_id,
+                "reason": reason,
+            }
+        )
         window._refresh_queue_summary = lambda: setattr(window, "queued_refreshes", window.queued_refreshes + 1)
         window._record_successful_card_add = window.recorded_words.append
         window._queue_payload = UnifiedSentenceMinerWindow._queue_payload.__get__(window, UnifiedSentenceMinerWindow)
@@ -230,14 +240,24 @@ class UnifiedSelectionTests(unittest.TestCase):
         append_queue.assert_not_called()
         self.assertEqual(window.recorded_words, ["hola"])
         self.assertEqual(window.queued_refreshes, 0)
-        self.assertIn("Added card to Anki (Note ID: 1234)", window.status_messages)
+        self.assertEqual(
+            window.feedback_events,
+            [
+                {
+                    "title": "Added to Anki",
+                    "sentence": "hola mundo",
+                    "variant": "added",
+                    "note_id": 1234,
+                    "reason": "",
+                }
+            ],
+        )
 
     def test_add_now_queues_when_anki_precheck_is_disconnected(self):
         window = self._make_add_stub()
         window.is_anki_connected = False
         with (
             patch("immersion_app.gui.main_window.append_queue_entry") as append_queue,
-            patch("immersion_app.gui.main_window.QMessageBox.information") as info_box,
             patch("immersion_app.gui.main_window.QMessageBox.critical") as critical_box,
             patch("immersion_app.gui.main_window.add_anki_card") as add_card,
         ):
@@ -250,8 +270,19 @@ class UnifiedSelectionTests(unittest.TestCase):
         self.assertEqual(queued_entry["translation"], "hello")
         self.assertEqual(window.recorded_words, [])
         self.assertEqual(window.queued_refreshes, 1)
-        info_box.assert_called_once()
         critical_box.assert_not_called()
+        self.assertEqual(
+            window.feedback_events,
+            [
+                {
+                    "title": "Queued for later",
+                    "sentence": "hola mundo",
+                    "variant": "queued",
+                    "note_id": None,
+                    "reason": "AnkiConnect is not available",
+                }
+            ],
+        )
 
     def test_add_now_queues_when_connection_drops_during_add(self):
         window = self._make_add_stub()
@@ -261,7 +292,6 @@ class UnifiedSelectionTests(unittest.TestCase):
                 side_effect=ConnectionError("Failed to connect to AnkiConnect"),
             ) as add_card,
             patch("immersion_app.gui.main_window.append_queue_entry") as append_queue,
-            patch("immersion_app.gui.main_window.QMessageBox.information") as info_box,
             patch("immersion_app.gui.main_window.QMessageBox.critical") as critical_box,
         ):
             UnifiedSentenceMinerWindow._add_now(window)
@@ -270,25 +300,150 @@ class UnifiedSelectionTests(unittest.TestCase):
         append_queue.assert_called_once()
         self.assertEqual(window.recorded_words, [])
         self.assertEqual(window.queued_refreshes, 1)
-        info_box.assert_called_once()
         critical_box.assert_not_called()
+        self.assertEqual(
+            window.feedback_events,
+            [
+                {
+                    "title": "Queued for later",
+                    "sentence": "hola mundo",
+                    "variant": "queued",
+                    "note_id": None,
+                    "reason": "Failed to connect to AnkiConnect",
+                }
+            ],
+        )
 
     def test_add_now_keeps_non_connection_errors_visible(self):
         window = self._make_add_stub()
         with (
             patch("immersion_app.gui.main_window.add_anki_card", side_effect=RuntimeError("deck missing")) as add_card,
             patch("immersion_app.gui.main_window.append_queue_entry") as append_queue,
-            patch("immersion_app.gui.main_window.QMessageBox.information") as info_box,
             patch("immersion_app.gui.main_window.QMessageBox.critical") as critical_box,
         ):
             UnifiedSentenceMinerWindow._add_now(window)
 
         add_card.assert_called_once_with("hola mundo", "hola", "hello")
         append_queue.assert_not_called()
-        info_box.assert_not_called()
         critical_box.assert_called_once()
         self.assertEqual(window.recorded_words, [])
         self.assertEqual(window.queued_refreshes, 0)
+        self.assertEqual(window.feedback_events, [])
+
+    def test_add_to_queue_shows_card_feedback(self):
+        window = self._make_add_stub()
+        with (
+            patch("immersion_app.gui.main_window.append_queue_entry") as append_queue,
+            patch("immersion_app.gui.main_window.QMessageBox.critical") as critical_box,
+        ):
+            UnifiedSentenceMinerWindow._add_to_queue(window)
+
+        append_queue.assert_called_once()
+        critical_box.assert_not_called()
+        self.assertEqual(window.queued_refreshes, 1)
+        self.assertEqual(
+            window.feedback_events,
+            [
+                {
+                    "title": "Saved to queue",
+                    "sentence": "hola mundo",
+                    "variant": "queued",
+                    "note_id": None,
+                    "reason": "",
+                }
+            ],
+        )
+
+
+class TranslationPrefetchTests(unittest.TestCase):
+    def _make_translation_stub(self):
+        window = UnifiedSentenceMinerWindow.__new__(UnifiedSentenceMinerWindow)
+        window.learning_language = "es"
+        window.native_language = "en"
+        window.translation_mode = "online"
+        window.translation_cache = {}
+        window._translation_requests = {}
+        window._translation_requests_by_key = {}
+        window._translation_context_version = 0
+        window.current_request_id = 0
+        window._next_translation_request_id = 0
+        window.selected_translation = ""
+        window.started_tasks = []
+        window.thread_pool = type("_Pool", (), {"start": lambda self, task: window.started_tasks.append(task)})()
+        window._update_selection_panel = lambda: None
+        window._update_action_buttons = lambda: None
+        window._set_status = lambda message, timeout_ms=4000: None
+        window._get_translation_language_codes = lambda: ("es", "en")
+        window._clean_word = UnifiedSentenceMinerWindow._clean_word.__get__(window, UnifiedSentenceMinerWindow)
+        window._translation_cache_key = UnifiedSentenceMinerWindow._translation_cache_key.__get__(
+            window, UnifiedSentenceMinerWindow
+        )
+        window._start_translation_request = UnifiedSentenceMinerWindow._start_translation_request.__get__(
+            window, UnifiedSentenceMinerWindow
+        )
+        window._request_translation = UnifiedSentenceMinerWindow._request_translation.__get__(
+            window, UnifiedSentenceMinerWindow
+        )
+        window._prefetch_translations = UnifiedSentenceMinerWindow._prefetch_translations.__get__(
+            window, UnifiedSentenceMinerWindow
+        )
+        window._iter_unique_clean_words = UnifiedSentenceMinerWindow._iter_unique_clean_words.__get__(
+            window, UnifiedSentenceMinerWindow
+        )
+        window._on_translation_done = UnifiedSentenceMinerWindow._on_translation_done.__get__(
+            window, UnifiedSentenceMinerWindow
+        )
+        window._on_translation_failed = UnifiedSentenceMinerWindow._on_translation_failed.__get__(
+            window, UnifiedSentenceMinerWindow
+        )
+        return window
+
+    def test_request_translation_uses_cached_value_without_starting_task(self):
+        window = self._make_translation_stub()
+        window.translation_cache[("es", "en", "hola")] = "hello"
+
+        window._request_translation("hola")
+
+        self.assertEqual(window.selected_translation, "hello")
+        self.assertEqual(window.started_tasks, [])
+
+    def test_prefetch_completion_populates_cache_without_overwriting_visible_translation(self):
+        window = self._make_translation_stub()
+        window.selected_translation = "keep me"
+
+        window._prefetch_translations(["hola"])
+        self.assertEqual(len(window.started_tasks), 1)
+
+        window.current_request_id = 999
+        window._on_translation_done(1, "hola", "hello")
+
+        self.assertEqual(window.translation_cache[("es", "en", "hola")], "hello")
+        self.assertEqual(window.selected_translation, "keep me")
+
+    def test_visible_request_reuses_existing_prefetch_inflight(self):
+        window = self._make_translation_stub()
+
+        window._prefetch_translations(["hola"])
+        self.assertEqual(len(window.started_tasks), 1)
+
+        window._request_translation("hola")
+
+        self.assertEqual(len(window.started_tasks), 1)
+        self.assertEqual(window.current_request_id, 1)
+        self.assertEqual(window.selected_translation, "translating...")
+        self.assertTrue(window._translation_requests[1]["visible"])
+
+        window._on_translation_done(1, "hola", "hello")
+
+        self.assertEqual(window.selected_translation, "hello")
+        self.assertEqual(window.translation_cache[("es", "en", "hola")], "hello")
+
+    def test_prefetch_deduplicates_inflight_words(self):
+        window = self._make_translation_stub()
+
+        window._prefetch_translations(["hola", "hola"])
+
+        self.assertEqual(len(window.started_tasks), 1)
 
 
 if __name__ == "__main__":
