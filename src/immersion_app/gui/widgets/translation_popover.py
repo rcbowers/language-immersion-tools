@@ -18,7 +18,7 @@ class TranslationPopover(QWidget):
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
 
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)  # Changed from False
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
 
         # Don't steal focus from the main window
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
