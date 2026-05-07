@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Clickable subtitle overlay widget."""
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QTextCharFormat, QTextLayout, QTextOption
 from PySide6.QtWidgets import QLabel
 
@@ -49,6 +49,7 @@ This design ensures that:
 
 class ClickableSubtitleLabel(QLabel):
     clicked = Signal(str, int, object)
+    background_clicked = Signal(object)
     debug_clicked = Signal(object)
     layout_updated = Signal()
 
@@ -118,6 +119,8 @@ class ClickableSubtitleLabel(QLabel):
         if word_info:
             word, index = word_info
             self.clicked.emit(word, index, event.modifiers())
+        else:
+            self.background_clicked.emit(event.modifiers())
         super().mousePressEvent(event)
 
     def resizeEvent(self, event):
@@ -187,6 +190,33 @@ class ClickableSubtitleLabel(QLabel):
                 )
             bounds.append({"index": index, "word": word.word, "rects": rects})
         return bounds
+
+    def selection_anchor_rect(self, start_index, end_index):
+        """Return an anchor rect for the selected word span in widget coordinates."""
+        self._ensure_layout()
+        if not self._word_rects or not self._words:
+            return QRect()
+
+        start = max(0, min(start_index, end_index))
+        end = min(len(self._words) - 1, max(start_index, end_index))
+        first_line_rects = []
+        line_top = None
+
+        for index in range(start, end + 1):
+            for rect in self._word_rects[index]:
+                if line_top is None:
+                    line_top = rect.top()
+                if abs(rect.top() - line_top) < 0.5:
+                    first_line_rects.append(rect)
+
+        if not first_line_rects:
+            return QRect()
+
+        left = min(rect.left() for rect in first_line_rects)
+        right = max(rect.right() for rect in first_line_rects)
+        top = min(rect.top() for rect in first_line_rects)
+        bottom = max(rect.bottom() for rect in first_line_rects)
+        return QRect(int(left), int(top), max(1, int(right - left)), max(1, int(bottom - top)))
 
     def _notify_layout_updated(self):
         self._ensure_layout()

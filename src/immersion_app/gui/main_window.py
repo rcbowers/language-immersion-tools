@@ -320,6 +320,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.subtitle_parser = None
         self.current_subtitle = None
         self.subtitle_selection_anchor = None
+        self.selected_subtitle_indices = []
+        self.selected_pdf_words = []
         self.subtitle_offset_ms = int(self.user_data["last_session"].get("subtitle_offset_ms") or 0)
         self._is_slider_dragging = False
 
@@ -345,6 +347,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.command_bar.open_requested.connect(self._open_content_dialog)
         self.command_bar.close_requested.connect(self._close_current_file)
         self.command_bar.settings_requested.connect(self._show_settings_dialog)
+        self.command_bar.previous_page_requested.connect(self._prev_page)
+        self.command_bar.next_page_requested.connect(self._next_page)
         self.command_bar.page_jump_requested.connect(self._jump_to_page)
         main_layout.addWidget(self.command_bar)
 
@@ -699,6 +703,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.subtitle_label = ClickableSubtitleLabel(page, vocabulary_seen=self.analytics_vocabulary)
         self.subtitle_label.setFixedHeight(80)
         self.subtitle_label.clicked.connect(self._on_subtitle_click)
+        self.subtitle_label.background_clicked.connect(lambda _mods: self._clear_selection_state())
         self.subtitle_label.setStyleSheet("""
             ClickableSubtitleLabel {
                 background-color: transparent;
@@ -840,7 +845,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         self.current_request_id += 1
         request_id = self.current_request_id
-        self.selected_translation = "Translating..."
+        self.selected_translation = "translating..."
         self._update_selection_panel()
         self._update_action_buttons()
         backend = OnlineTranslationBackend() if self.translation_mode == "online" else OfflineTranslationBackend()
@@ -896,74 +901,63 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         else:
             self.source_header_label.setText("Nothing selected")
 
-        # Update and show popover if we have a selection
-        if self.selected_word and self.selected_translation:
+        should_show_overlay = bool(
+            self.selected_word
+            and self.selected_translation
+            and not self.selected_translation.startswith("Translation error:")
+        )
+        if should_show_overlay:
             self._show_translation_popover()
+        else:
+            self._close_popover()
 
     def _update_action_buttons(self):
         has_selection = bool(self.selected_word)
         has_translation = bool(
-            self.selected_translation and not self.selected_translation.startswith("Translation error:")
+            self.selected_translation
+            and self.selected_translation != "translating..."
+            and not self.selected_translation.startswith("Translation error:")
         )
         self.add_now_button.setEnabled(has_selection and has_translation)
         self.add_queue_button.setEnabled(has_selection and has_translation)
 
     def _clear_selection_state(self):
+        had_pdf_selection = bool(self.highlight_bboxes)
         self.selected_word = ""
         self.selected_sentence = ""
         self.selected_translation = ""
+        self.selected_subtitle_indices = []
+        self.selected_pdf_words = []
+        self.highlight_bboxes = []
+        self.selection_anchor_key = None
+        if hasattr(self, "subtitle_label"):
+            self.subtitle_label.highlight_word_range(None, None)
+        if had_pdf_selection and self.doc and self.current_source_type == "pdf":
+            self._render_current_page()
         self._update_selection_panel()
         self._update_action_buttons()
-        # Close popover if open
-        if self.translation_popover.isVisible():
-            self.translation_popover.close()
+        self._close_popover()
 
     def _show_translation_popover(self):
-        """Show translation popover near the selected word."""
-        # Only show if we have valid translation
+        """Show the inline translation overlay above the selected span."""
         if not self.selected_translation or self.selected_translation.startswith("Translation error:"):
             return
 
-        # Set popover content
         self.translation_popover.set_content(
             word=self.selected_word,
             meaning=self.selected_translation,
             sentence=self.selected_sentence,
-            sentence_translation="",  # TODO: Get sentence translation if available
-            metadata=""  # TODO: Add POS/IPA if available
+            sentence_translation="",
+            metadata="",
         )
 
-        # Position near the clicked word
-        # For PDF: use highlight_bboxes to get word position
-        # For video: use subtitle label position
-        if self.current_source_type == "pdf" and self.highlight_bboxes:
-            # Get first bbox and convert to global coordinates
-            bbox = self.highlight_bboxes[0]
-            x_screen = int(bbox[0] * self.zoom_factor)
-            y_screen = int(bbox[1] * self.zoom_factor)
+        anchor_rect = self._current_selection_anchor_rect()
+        if anchor_rect.isNull():
+            self._close_popover()
+            return
 
-            # Convert from PDF label coordinates to global screen coordinates
-            pdf_point = self.pdf_label.mapToGlobal(QPoint(x_screen, y_screen))
-            word_rect = QRect(
-                pdf_point.x(),
-                pdf_point.y(),
-                int((bbox[2] - bbox[0]) * self.zoom_factor),
-                int((bbox[3] - bbox[1]) * self.zoom_factor)
-            )
-            self.translation_popover.position_near_word(word_rect)
-            self.translation_popover.show_animated()
-
-        elif self.current_source_type == "video":
-            # Position near subtitle label
-            subtitle_global_pos = self.subtitle_label.mapToGlobal(QPoint(0, 0))
-            word_rect = QRect(
-                subtitle_global_pos.x() + self.subtitle_label.width() // 2 - 50,
-                subtitle_global_pos.y(),
-                100,
-                self.subtitle_label.height()
-            )
-            self.translation_popover.position_near_word(word_rect)
-            self.translation_popover.show_animated()
+        self.translation_popover.position_near_word(anchor_rect)
+        self.translation_popover.show_animated()
 
     def _on_popover_edit_requested(self):
         """Handle edit request from popover."""
@@ -972,13 +966,56 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _on_popover_closed(self):
         """Handle popover close event."""
-        # Optionally clear selection or keep it
         pass
 
     def _close_popover(self):
         """Close the translation popover if visible."""
         if self.translation_popover.isVisible():
             self.translation_popover.close()
+
+    def _current_selection_anchor_rect(self):
+        if self.current_source_type == "video":
+            return self._subtitle_selection_anchor_rect()
+        if self.current_source_type == "pdf":
+            return self._pdf_selection_anchor_rect()
+        return QRect()
+
+    def _subtitle_selection_anchor_rect(self):
+        if not self.selected_subtitle_indices:
+            return QRect()
+
+        local_rect = self.subtitle_label.selection_anchor_rect(
+            self.selected_subtitle_indices[0],
+            self.selected_subtitle_indices[-1],
+        )
+        if local_rect.isNull():
+            return QRect()
+
+        top_left = self.subtitle_label.mapTo(self, local_rect.topLeft())
+        return QRect(top_left, local_rect.size())
+
+    def _pdf_selection_anchor_rect(self):
+        if not self.selected_pdf_words:
+            return QRect()
+
+        first_line_key = (int(self.selected_pdf_words[0][5]), int(self.selected_pdf_words[0][6]))
+        first_line_words = [word for word in self.selected_pdf_words if (int(word[5]), int(word[6])) == first_line_key]
+        if not first_line_words:
+            return QRect()
+
+        left = min(word[0] for word in first_line_words)
+        top = min(word[1] for word in first_line_words)
+        right = max(word[2] for word in first_line_words)
+        bottom = max(word[3] for word in first_line_words)
+
+        local_rect = QRect(
+            int(left * self.zoom_factor),
+            int(top * self.zoom_factor),
+            max(1, int((right - left) * self.zoom_factor)),
+            max(1, int((bottom - top) * self.zoom_factor)),
+        )
+        top_left = self.pdf_label.mapTo(self, local_rect.topLeft())
+        return QRect(top_left, local_rect.size())
 
     def _update_command_bar_stats(self):
         """Update the stats chip in the command bar."""
@@ -1097,17 +1134,37 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             "status": "queued",
         }
 
+    def _queue_current_selection_for_later(self, reason: str):
+        append_queue_entry(self._queue_payload())
+        self._refresh_queue_summary()
+        self._set_status(f"Queued '{self.selected_word}' for later: {reason}")
+        QMessageBox.information(
+            self,
+            "Saved for Later",
+            f"Anki is not available, so '{self.selected_word}' was saved to the queue for later processing.",
+        )
+
     def _add_now(self):
         if not self.selected_word or not self.selected_translation:
             return
         if not self.is_anki_connected:
-            QMessageBox.warning(self, "Anki Not Connected", "AnkiConnect is not available.")
+            try:
+                self._queue_current_selection_for_later("AnkiConnect is not available")
+            except Exception as exc:
+                QMessageBox.critical(self, "Queue Write Failed", str(exc))
             return
         try:
             note_id = add_anki_card(self._build_note_sentence(), self.selected_word, self.selected_translation)
             self._record_successful_card_add(self.selected_word)
             self._set_status(f"Added card to Anki (Note ID: {note_id})")
+            self._close_popover()
         except Exception as exc:
+            if isinstance(exc, ConnectionError):
+                try:
+                    self._queue_current_selection_for_later(str(exc))
+                except Exception as queue_exc:
+                    QMessageBox.critical(self, "Queue Write Failed", str(queue_exc))
+                return
             QMessageBox.critical(self, "Anki Add Failed", str(exc))
 
     def _add_to_queue(self):
@@ -1284,6 +1341,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         # Update zoom display in status bar
         self.pdf_status_bar.set_zoom_level(self.zoom_factor)
+        if (
+            self.current_source_type == "pdf"
+            and self.selected_pdf_words
+            and self.selected_translation
+            and self.selected_translation != "translating..."
+            and not self.selected_translation.startswith("Translation error:")
+        ):
+            self._show_translation_popover()
 
     def _build_line_index(self, words):
         line_map = {}
@@ -1317,6 +1382,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
                 hit_word = word
                 break
         if not hit_word:
+            self._clear_selection_state()
             return
 
         shift_pressed = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
@@ -1325,9 +1391,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         if not cleaned_words:
             return
         self.highlight_bboxes = [(w[0], w[1], w[2], w[3]) for w in selected_words]
+        self.selected_pdf_words = list(selected_words)
+        self.selected_subtitle_indices = []
         self.selected_word = " ".join(cleaned_words)
         self.selected_sentence = self._extract_context_for_selection(selected_words)
-        self.selected_translation = "Translating..."
+        self.selected_translation = "translating..."
         self.current_source_type = "pdf"
         self.current_source_location = f"Page {self.current_page_index + 1}"
         self._update_selection_panel()
@@ -1501,7 +1569,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             return
         self.selected_word = " ".join(cleaned_words)
         self.selected_sentence = self.current_subtitle.text
-        self.selected_translation = "Translating..."
+        self.selected_translation = "translating..."
+        self.selected_subtitle_indices = list(selected_indices)
+        self.selected_pdf_words = []
         self.current_source_type = "video"
         self.current_source_location = self._fmt_ms(self.media_player.position())
         self.subtitle_label.highlight_word_range(selected_indices[0], selected_indices[-1])
@@ -1537,19 +1607,25 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         if not self.subtitle_parser:
             self.current_subtitle = None
             self.subtitle_selection_anchor = None
+            self.selected_subtitle_indices = []
             self.subtitle_label.set_subtitle(None)
+            self._close_popover()
             return
         lookup_position = max(0, position - self.subtitle_offset_ms)
         subtitle = self.subtitle_parser.get_subtitle_at_time(lookup_position)
         if subtitle is None:
             self.current_subtitle = None
             self.subtitle_selection_anchor = None
+            self.selected_subtitle_indices = []
             self.subtitle_label.set_subtitle(None)
+            self._close_popover()
             return
         if self.current_subtitle is None or subtitle.index != self.current_subtitle.index:
             self.current_subtitle = subtitle
             self.subtitle_selection_anchor = None
+            self.selected_subtitle_indices = []
             self.subtitle_label.set_subtitle(subtitle)
+            self._close_popover()
 
     def _on_duration_changed(self, duration):
         self.transport_bar.set_duration(max(0, duration))

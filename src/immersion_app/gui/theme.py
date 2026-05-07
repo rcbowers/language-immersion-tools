@@ -27,6 +27,7 @@ class Theme:
 
     # Accent Colors
     ACCENT = "#5b6cff"
+    ACCENT_DARK = "#2f3fd9"
     ACCENT_SOFT = "rgba(91,108,255,0.10)"
     ACCENT_BORDER = "rgba(91,108,255,0.25)"
 
@@ -55,7 +56,7 @@ class Theme:
     FONT_WEIGHT_BOLD = 700
 
     # Spacing
-    COMMAND_BAR_HEIGHT = 42
+    COMMAND_BAR_HEIGHT = 56
     TRANSPORT_BAR_HEIGHT = 38
     STATUS_BAR_HEIGHT = 32
     CHAPTER_RAIL_WIDTH = 48
@@ -137,7 +138,7 @@ class Theme:
                     color: {Theme.TEXT};
                     border: 1px solid {Theme.BORDER_STRONG};
                     border-radius: 6px;
-                    padding: 8px 16px;
+                    padding: 4px 12px;
                     font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
                     font-size: 13px;
                     font-weight: {Theme.FONT_WEIGHT_MEDIUM};
@@ -165,6 +166,29 @@ class Theme:
                 }}
                 QPushButton:pressed {{
                     background-color: #e4e4e7;
+                }}
+            """
+        elif variant == "compact_accent":
+            return f"""
+                QPushButton {{
+                    background-color: {Theme.ACCENT};
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 0px;
+                    font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                    font-size: 16px;
+                    font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
+                }}
+                QPushButton:hover {{
+                    background-color: #4a5ce6;
+                }}
+                QPushButton:pressed {{
+                    background-color: #3d4ed9;
+                }}
+                QPushButton:disabled {{
+                    background-color: {Theme.SURFACE_ALT};
+                    color: {Theme.TEXT_MUTED};
                 }}
             """
 
