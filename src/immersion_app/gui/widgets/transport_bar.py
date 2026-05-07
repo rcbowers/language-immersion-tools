@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QSlider,
     QLabel,
     QComboBox,
+    QSizePolicy,
 )
 
 from immersion_app.gui.theme import Theme
@@ -36,6 +37,7 @@ class TransportBar(QWidget):
         super().__init__(parent)
 
         self.setFixedHeight(Theme.TRANSPORT_BAR_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._build_ui()
 
     def _build_ui(self):

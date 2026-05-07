@@ -14,9 +14,15 @@ class TranslationPopover(QWidget):
     closed = Signal()
 
     def __init__(self, parent=None):
-        super().__init__(parent)
+        # Make this a frameless tool window that floats above native widgets
+        super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)  # Changed from False
+
+        # Don't steal focus from the main window
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+
         self.setStyleSheet(f"""
             TranslationPopover {{
                 background-color: {Theme.SURFACE};
@@ -69,26 +75,42 @@ class TranslationPopover(QWidget):
         self.translation_label.setToolTip(word)
         self.adjustSize()
 
-    def position_near_word(self, word_rect: QRect):
-        """Place the overlay above the given anchor rect in parent coordinates."""
-        if self.parentWidget() is None:
-            return
+    def set_anchor_rect(self, rect: QRect):
+        """Store the anchor rect for later repositioning."""
+        self._anchor_rect = rect
 
-        parent_rect = self.parentWidget().rect()
+    def reposition_from_stored_anchor(self):
+        """Reposition using stored anchor rect (for window resize)."""
+        if hasattr(self, '_anchor_rect') and not self._anchor_rect.isNull():
+            self.position_near_word(self._anchor_rect)
+
+    def position_near_word(self, word_rect_global: QRect):
+        """Place the overlay above the given anchor rect in global screen coordinates."""
         overlay_size = self.sizeHint()
         gap = 10
-        x = word_rect.left()
-        y = word_rect.top() - overlay_size.height() - gap
 
-        max_x = max(0, parent_rect.width() - overlay_size.width())
-        x = max(0, min(x, max_x))
+        # Try to position above the word
+        x = word_rect_global.left()
+        y = word_rect_global.top() - overlay_size.height() - gap
 
-        if y < 0:
-            y = min(parent_rect.height() - overlay_size.height(), word_rect.bottom() + gap)
-        else:
-            y = min(y, parent_rect.height() - overlay_size.height())
+        # Get screen geometry for bounds checking
+        from PySide6.QtWidgets import QApplication
+        screen = QApplication.screenAt(word_rect_global.center())
+        if screen:
+            screen_rect = screen.availableGeometry()
 
-        self.setGeometry(x, max(0, y), overlay_size.width(), overlay_size.height())
+            # Clamp x to screen bounds
+            max_x = screen_rect.right() - overlay_size.width()
+            x = max(screen_rect.left(), min(x, max_x))
+
+            # If no room above, position below
+            if y < screen_rect.top():
+                y = word_rect_global.bottom() + gap
+
+            # Ensure y is within screen bounds
+            y = max(screen_rect.top(), min(y, screen_rect.bottom() - overlay_size.height()))
+
+        self.setGeometry(x, y, overlay_size.width(), overlay_size.height())
 
     def show_animated(self):
         """Show the overlay."""

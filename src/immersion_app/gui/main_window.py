@@ -10,8 +10,8 @@ from datetime import datetime
 from pathlib import Path
 
 import fitz
-from PySide6.QtCore import QObject, QPoint, QRect, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence, QPainter, QPen, QPixmap
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal, QPropertyAnimation, QEasingCurve
+from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence, QPainter, QPen, QPixmap, QTextCursor
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -50,9 +50,13 @@ from immersion_app.core.language_config import (
     list_language_codes,
     normalize_language_code,
 )
+from immersion_app.core.mode import WorkspaceMode, ModeManager
+from immersion_app.core.selection_state import SelectionState
+from immersion_app.core.shortcuts import ShortcutManager
 from immersion_app.core.paths import DATA_ROOT, PROCESSED_LOG_PATH, QUEUE_JSON_PATH
 from immersion_app.core.queue_store import append_processed_log, append_queue_entry, load_queue_entries, queue_count, save_queue_entries
 from immersion_app.core.user_data import load_user_data, save_user_data
+from immersion_app.gui.widgets.card_feedback_toast import CardFeedbackToast
 from immersion_app.gui.widgets.subtitle_widget import ClickableSubtitleLabel
 from immersion_app.gui.widgets.command_bar import CommandBar
 from immersion_app.gui.widgets.translation_popover import TranslationPopover
@@ -273,7 +277,7 @@ class QueueDialog(QDialog):
 class UnifiedSentenceMinerWindow(QMainWindow):
     SUPPORTED_CONTENT_FILTER = "Content Files (*.pdf *.mp4 *.mkv *.avi *.mov *.webm)"
 
-    def __init__(self):
+    def __init__(self, console_capture=None):
         super().__init__()
         self.setWindowTitle("LinguaLoop Workspace")
         self.resize(1680, 980)
@@ -281,18 +285,23 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.thread_pool = QThreadPool.globalInstance()
         self._subtitle_thread_pool = QThreadPool.globalInstance()
         self.current_request_id = 0
+        self._next_translation_request_id = 0
         self.anki_check_request_id = 0
         self.translation_cache = {}
-        self._translation_cache_keys_by_request = {}
+        self._translation_requests = {}
+        self._translation_requests_by_key = {}
+        self._translation_context_version = 0
+        self.console_capture = console_capture
         self.user_data = load_user_data()
         self.analytics_vocabulary = set(self.user_data.get("analytics", {}).get("vocabulary_seen", []))
         self.analytics_vocabulary.update(load_snapshot())
         print(f"[main] __init__: analytics_vocabulary seeded with {len(self.analytics_vocabulary)} words at startup")
 
-        self.selected_word = ""
-        self.selected_sentence = ""
-        self.selected_translation = ""
-        self.current_source_type = ""
+        # Mode management
+        self.mode_manager = ModeManager()
+        self.selection = SelectionState()
+        self.shortcut_manager = ShortcutManager()
+
         self.current_source_name = ""
         self.current_source_location = ""
         self.is_anki_connected = False
@@ -310,8 +319,6 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.page_line_words = {}
         self.page_word_order = []
         self.page_word_index = {}
-        self.highlight_bboxes = []
-        self.selection_anchor_key = None
 
         self.media_player = None
         self.audio_output = None
@@ -319,11 +326,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.current_srt_path = ""
         self.subtitle_parser = None
         self.current_subtitle = None
-        self.subtitle_selection_anchor = None
-        self.selected_subtitle_indices = []
-        self.selected_pdf_words = []
         self.subtitle_offset_ms = int(self.user_data["last_session"].get("subtitle_offset_ms") or 0)
         self._is_slider_dragging = False
+        self._initial_layout_pending = True
 
         self.queue_dialog = None
 
@@ -340,27 +345,36 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         main_layout = QVBoxLayout(main_container)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
+        self._main_container = main_container
+        self._main_layout = main_layout
 
         # Command bar at top
         self.command_bar = CommandBar()
-        self.command_bar.mode_changed.connect(self._on_mode_changed)
+        self.command_bar.mode_changed.connect(self._on_command_bar_mode_request)
         self.command_bar.open_requested.connect(self._open_content_dialog)
         self.command_bar.close_requested.connect(self._close_current_file)
         self.command_bar.settings_requested.connect(self._show_settings_dialog)
         self.command_bar.previous_page_requested.connect(self._prev_page)
         self.command_bar.next_page_requested.connect(self._next_page)
         self.command_bar.page_jump_requested.connect(self._jump_to_page)
-        main_layout.addWidget(self.command_bar)
+        self.command_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        main_layout.addWidget(self.command_bar, stretch=0)
 
         # Workspace stack (Welcome/PDF/Video pages)
         self.workspace_stack = QStackedWidget()
+        self.workspace_stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.workspace_stack.setMinimumHeight(400)
         self.welcome_page = self._build_welcome_page()
         self.pdf_page = self._build_pdf_page()
         self.video_page = self._build_video_page()
         self.workspace_stack.addWidget(self.welcome_page)
         self.workspace_stack.addWidget(self.pdf_page)
         self.workspace_stack.addWidget(self.video_page)
-        main_layout.addWidget(self.workspace_stack)
+        main_layout.addWidget(self.workspace_stack, stretch=1)
+
+        self.console_pane = self._build_console_pane()
+        self.console_pane.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        main_layout.addWidget(self.console_pane, stretch=0)
 
         self.setCentralWidget(main_container)
 
@@ -375,103 +389,259 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.translation_popover.add_requested.connect(self._add_now)
         self.translation_popover.edit_requested.connect(self._on_popover_edit_requested)
         self.translation_popover.closed.connect(self._on_popover_closed)
+        self.card_feedback_toast = CardFeedbackToast(self)
 
         # Setup keyboard shortcuts
         self._setup_keyboard_shortcuts()
 
+        # Connect mode manager signals
+        self.mode_manager.mode_changed.connect(self._on_mode_changed_internal)
+        self.mode_manager.mode_transition_failed.connect(self._on_mode_transition_failed)
+
+    def resizeEvent(self, event):
+        """Handle window resize - update layouts and reposition overlays."""
+        super().resizeEvent(event)
+        self._reposition_overlays()
+
+    def changeEvent(self, event):
+        """Handle window state changes (maximize/minimize/fullscreen)."""
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            # 50ms delay allows Qt to complete state transition
+            QTimer.singleShot(50, self._reposition_overlays)
+
+    def _reposition_overlays(self):
+        """Reposition all floating overlays based on current window geometry."""
+        self._position_card_feedback_toast()
+        if self.translation_popover.isVisible():
+            self.translation_popover.reposition_from_stored_anchor()
+
     def _setup_keyboard_shortcuts(self):
-        """Setup global keyboard shortcuts."""
-        # Mode switching
+        """Setup mode-aware keyboard shortcuts."""
+        # GLOBAL: Mode switching
         self._sc_pdf_mode = QAction("PDF Mode", self)
         self._sc_pdf_mode.setShortcut(QKeySequence("Ctrl+1"))
-        self._sc_pdf_mode.triggered.connect(lambda: self._on_mode_changed("pdf"))
+        self._sc_pdf_mode.triggered.connect(lambda: self.mode_manager.set_mode(WorkspaceMode.PDF))
         self.addAction(self._sc_pdf_mode)
+        self.shortcut_manager.add_shortcut('global', self._sc_pdf_mode)
 
         self._sc_video_mode = QAction("Video Mode", self)
         self._sc_video_mode.setShortcut(QKeySequence("Ctrl+2"))
-        self._sc_video_mode.triggered.connect(lambda: self._on_mode_changed("video"))
+        self._sc_video_mode.triggered.connect(lambda: self.mode_manager.set_mode(WorkspaceMode.VIDEO))
         self.addAction(self._sc_video_mode)
+        self.shortcut_manager.add_shortcut('global', self._sc_video_mode)
 
-        # File operations
+        # GLOBAL: File operations
         self._sc_open = QAction("Open source", self)
         self._sc_open.setShortcut(QKeySequence("Ctrl+O"))
         self._sc_open.triggered.connect(self._open_content_dialog)
         self.addAction(self._sc_open)
+        self.shortcut_manager.add_shortcut('global', self._sc_open)
 
         self._sc_load_subs = QAction("Load subtitles", self)
         self._sc_load_subs.setShortcut(QKeySequence("Ctrl+L"))
         self._sc_load_subs.triggered.connect(self._open_subtitle_dialog)
         self.addAction(self._sc_load_subs)
+        self.shortcut_manager.add_shortcut('global', self._sc_load_subs)
 
-        # Study actions
+        # GLOBAL: Study actions
         self._sc_add_now = QAction("Add now", self)
         self._sc_add_now.setShortcut(QKeySequence("Ctrl+Return"))
         self._sc_add_now.triggered.connect(self._add_now)
         self.addAction(self._sc_add_now)
+        self.shortcut_manager.add_shortcut('global', self._sc_add_now)
 
         self._sc_add_queue = QAction("Add to queue", self)
         self._sc_add_queue.setShortcut(QKeySequence("Ctrl+Shift+Return"))
         self._sc_add_queue.triggered.connect(self._add_to_queue)
         self.addAction(self._sc_add_queue)
+        self.shortcut_manager.add_shortcut('global', self._sc_add_queue)
 
-        # Video playback
+        # GLOBAL: Close popover
+        escape_action = QAction("Close Popover", self)
+        escape_action.setShortcut(QKeySequence(Qt.Key.Key_Escape))
+        escape_action.triggered.connect(self._close_popover)
+        self.addAction(escape_action)
+        self.shortcut_manager.add_shortcut('global', escape_action)
+
+        # VIDEO: Playback
         play_action = QAction("Play/Pause", self)
         play_action.setShortcut(QKeySequence(Qt.Key.Key_Space))
         play_action.triggered.connect(self._toggle_play_pause)
         self.addAction(play_action)
+        self.shortcut_manager.add_shortcut('video', play_action)
 
-        # PDF navigation
+        # PDF: Navigation
         prev_page_action = QAction("Previous Page", self)
         prev_page_action.setShortcut(QKeySequence(Qt.Key.Key_Left))
         prev_page_action.triggered.connect(self._prev_page)
         self.addAction(prev_page_action)
+        self.shortcut_manager.add_shortcut('pdf', prev_page_action)
 
         next_page_action = QAction("Next Page", self)
         next_page_action.setShortcut(QKeySequence(Qt.Key.Key_Right))
         next_page_action.triggered.connect(self._next_page)
         self.addAction(next_page_action)
+        self.shortcut_manager.add_shortcut('pdf', next_page_action)
 
-        # PDF zoom
+        # PDF: Zoom
         self._sc_zoom_in = QAction("Zoom In", self)
         self._sc_zoom_in.setShortcut(QKeySequence("Ctrl++"))
         self._sc_zoom_in.triggered.connect(self._zoom_in)
         self.addAction(self._sc_zoom_in)
+        self.shortcut_manager.add_shortcut('pdf', self._sc_zoom_in)
 
         self._sc_zoom_out = QAction("Zoom Out", self)
         self._sc_zoom_out.setShortcut(QKeySequence("Ctrl+-"))
         self._sc_zoom_out.triggered.connect(self._zoom_out)
         self.addAction(self._sc_zoom_out)
+        self.shortcut_manager.add_shortcut('pdf', self._sc_zoom_out)
 
         self._sc_fit_width = QAction("Fit to Width", self)
         self._sc_fit_width.setShortcut(QKeySequence("Ctrl+0"))
         self._sc_fit_width.triggered.connect(self._fit_width)
         self.addAction(self._sc_fit_width)
+        self.shortcut_manager.add_shortcut('pdf', self._sc_fit_width)
 
-        # Close popover
-        escape_action = QAction("Close Popover", self)
-        escape_action.setShortcut(QKeySequence(Qt.Key.Key_Escape))
-        escape_action.triggered.connect(self._close_popover)
-        self.addAction(escape_action)
+    def _build_console_pane(self):
+        pane = QWidget()
+        pane.setVisible(False)
+        pane.setStyleSheet(f"""
+            QWidget {{
+                background-color: {Theme.SURFACE};
+                border-top: 1px solid {Theme.BORDER};
+            }}
+        """)
+        layout = QVBoxLayout(pane)
+        layout.setContentsMargins(12, 6, 12, 8)
+        layout.setSpacing(6)
 
-    def _on_mode_changed(self, mode: str):
-        """Handle mode change from command bar."""
-        if mode == "pdf":
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(6)
+
+        title = QLabel("Python Console")
+        title.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 12px;
+                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
+            }}
+        """)
+        header_row.addWidget(title)
+        header_row.addStretch()
+
+        close_button = QPushButton("Hide")
+        close_button.setFixedHeight(24)
+        close_button.setStyleSheet(Theme.get_button_style("secondary"))
+        close_button.clicked.connect(lambda: self._toggle_console_pane(False))
+        header_row.addWidget(close_button)
+        layout.addLayout(header_row)
+
+        self.console_output = QTextEdit()
+        self.console_output.setReadOnly(True)
+        self.console_output.setMinimumHeight(160)
+        self.console_output.setMaximumHeight(400)
+        self.console_output.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.console_output.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: #111827;
+                color: #e4e4e7;
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 8px;
+                padding: 10px;
+                font-family: {Theme.FONT_MONO};
+                font-size: 12px;
+            }}
+        """)
+        layout.addWidget(self.console_output)
+        return pane
+
+    def connect_console_capture(self):
+        if self.console_capture is None:
+            return
+        self.console_capture.text_emitted.connect(self._append_console_text)
+
+    def _toggle_console_pane(self, checked=None):
+        if checked is None:
+            checked = not self.console_pane.isVisible()
+        checked = bool(checked)
+        self.console_pane.setVisible(checked)
+        if hasattr(self, "pdf_status_bar"):
+            self.pdf_status_bar.set_console_visible(checked)
+        if checked:
+            self.console_output.moveCursor(QTextCursor.MoveOperation.End)
+
+    def _append_console_text(self, text):
+        if not text:
+            return
+        cursor = self.console_output.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(text)
+        self.console_output.setTextCursor(cursor)
+        self.console_output.ensureCursorVisible()
+        document = self.console_output.document()
+        max_blocks = 3000
+        while document.blockCount() > max_blocks:
+            trim_cursor = self.console_output.textCursor()
+            trim_cursor.movePosition(QTextCursor.MoveOperation.Start)
+            trim_cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
+            trim_cursor.removeSelectedText()
+            trim_cursor.deleteChar()
+
+    def _on_command_bar_mode_request(self, mode_str: str):
+        """Handle mode change request from command bar."""
+        if mode_str == "pdf":
+            self.mode_manager.set_mode(WorkspaceMode.PDF)
+        elif mode_str == "video":
+            self.mode_manager.set_mode(WorkspaceMode.VIDEO)
+
+    def _on_mode_changed_internal(self, mode: WorkspaceMode):
+        """
+        Internal mode change handler - SINGLE PLACE for mode changes.
+        """
+        # Update workspace stack
+        if mode == WorkspaceMode.WELCOME:
+            self.workspace_stack.setCurrentWidget(self.welcome_page)
+        elif mode == WorkspaceMode.PDF:
+            self.workspace_stack.setCurrentWidget(self.pdf_page)
             if self.doc:
-                self.workspace_stack.setCurrentWidget(self.pdf_page)
                 self.command_bar.set_page_info(self.current_page_index + 1, self.doc.page_count)
-            else:
-                self.workspace_stack.setCurrentWidget(self.welcome_page)
-        elif mode == "video":
+        elif mode == WorkspaceMode.VIDEO:
+            self.workspace_stack.setCurrentWidget(self.video_page)
             self.command_bar.set_page_info(0, 0)
-            if self.current_video_path:
-                self.workspace_stack.setCurrentWidget(self.video_page)
-            else:
-                self.workspace_stack.setCurrentWidget(self.welcome_page)
+
+        # Synchronize command bar pills
+        self.command_bar.set_mode(self._mode_to_string(mode))
+
+        # Update keyboard shortcuts
+        self.shortcut_manager.update_for_mode(mode)
+        print(f"[MODE] Changed to {mode}, shortcuts updated")
+
+    def _on_mode_transition_failed(self, mode_name: str, reason: str):
+        """Handle failed mode transition."""
+        self._set_status(f"Cannot switch to {mode_name}: {reason}")
+
+    def _mode_to_string(self, mode: WorkspaceMode) -> str:
+        """Convert WorkspaceMode to string for backward compatibility."""
+        if mode == WorkspaceMode.PDF:
+            return "pdf"
+        elif mode == WorkspaceMode.VIDEO:
+            return "video"
+        return ""
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._initial_layout_pending:
+            self._initial_layout_pending = False
+            self._reposition_overlays()
 
     def _show_settings_dialog(self):
         """Show settings dialog (stub for now - will implement later)."""
         # TODO: Create a proper settings dialog
         menu = QMenu(self)
+        current_mode = self.mode_manager.current_mode
 
         menu.addAction("Toggle translation mode", self._toggle_translation_mode)
         menu.addSeparator()
@@ -501,21 +671,31 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction("Start Anki", self._start_anki)
         menu.addAction("Check Anki", self._refresh_anki_status)
-        menu.addAction("Generate subtitles", self._generate_subtitles_interactive)
+
+        # Only show subtitle generation in video mode
+        if current_mode == WorkspaceMode.VIDEO:
+            menu.addAction("Generate subtitles", self._generate_subtitles_interactive)
 
         menu.addSeparator()
         menu.addAction(self._sc_pdf_mode)
         menu.addAction(self._sc_video_mode)
         menu.addSeparator()
         menu.addAction(self._sc_open)
-        menu.addAction(self._sc_load_subs)
+
+        # Only show load subtitles in video mode
+        if current_mode == WorkspaceMode.VIDEO:
+            menu.addAction(self._sc_load_subs)
+
         menu.addSeparator()
         menu.addAction(self._sc_add_now)
         menu.addAction(self._sc_add_queue)
-        menu.addSeparator()
-        menu.addAction(self._sc_zoom_in)
-        menu.addAction(self._sc_zoom_out)
-        menu.addAction(self._sc_fit_width)
+
+        # Only show zoom controls in PDF mode
+        if current_mode == WorkspaceMode.PDF:
+            menu.addSeparator()
+            menu.addAction(self._sc_zoom_in)
+            menu.addAction(self._sc_zoom_out)
+            menu.addAction(self._sc_fit_width)
 
         # Show menu at settings button
         button_pos = self.command_bar.settings_button.mapToGlobal(
@@ -659,9 +839,16 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.pdf_label = ClickablePdfLabel()
         self.pdf_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.pdf_label.clicked.connect(self._on_pdf_click)
+        self.pdf_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding
+        )
+        self.pdf_label.setMinimumSize(400, 400)  # Prevent collapse
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(False)
         self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self.scroll_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.scroll_area.setFocusPolicy(Qt.FocusPolicy.WheelFocus)
         self.scroll_area.setWidget(self.pdf_label)
         self.scroll_area.setStyleSheet(f"""
             QScrollArea {{
@@ -669,10 +856,10 @@ class UnifiedSentenceMinerWindow(QMainWindow):
                 background-color: {Theme.BG};
             }}
         """)
-        column_layout.addWidget(self.scroll_area)
+        column_layout.addWidget(self.scroll_area, stretch=1)
 
-        main_layout.addWidget(reading_column)
-        page_layout.addLayout(main_layout)
+        main_layout.addWidget(reading_column, stretch=1)
+        page_layout.addLayout(main_layout, stretch=1)
 
         # Status bar at bottom
         self.pdf_status_bar = PDFStatusBar()
@@ -680,6 +867,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.pdf_status_bar.zoom_out_clicked.connect(self._zoom_out)
         self.pdf_status_bar.fit_width_clicked.connect(self._fit_width)
         self.pdf_status_bar.reset_zoom_clicked.connect(self._reset_zoom)
+        self.pdf_status_bar.console_toggled.connect(self._toggle_console_pane)
         page_layout.addWidget(self.pdf_status_bar)
 
         return page
@@ -697,11 +885,13 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         # Full-bleed video widget
         self.video_widget = QVideoWidget(page)
         self.video_widget.setMinimumHeight(480)
+        self.video_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.video_widget, stretch=1)
 
         # Subtitle overlay (positioned at bottom, above transport bar)
         self.subtitle_label = ClickableSubtitleLabel(page, vocabulary_seen=self.analytics_vocabulary)
         self.subtitle_label.setFixedHeight(80)
+        self.subtitle_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.subtitle_label.clicked.connect(self._on_subtitle_click)
         self.subtitle_label.background_clicked.connect(lambda _mods: self._clear_selection_state())
         self.subtitle_label.setStyleSheet("""
@@ -709,7 +899,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
                 background-color: transparent;
             }
         """)
-        layout.addWidget(self.subtitle_label)
+        layout.addWidget(self.subtitle_label, stretch=0)
 
         # Transport bar with full controls
         self.transport_bar = TransportBar()
@@ -720,7 +910,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.transport_bar.slider_moved.connect(self._on_slider_moved)
         self.transport_bar.speed_changed.connect(self._on_speed_changed)
         self.transport_bar.volume_slider.valueChanged.connect(self._on_volume_changed)
-        layout.addWidget(self.transport_bar)
+        layout.addWidget(self.transport_bar, stretch=0)
 
         # Keep references for backward compatibility
         self.play_pause_button = self.transport_bar.play_pause_button
@@ -744,7 +934,40 @@ class UnifiedSentenceMinerWindow(QMainWindow):
     def _set_status(self, message, timeout_ms=4000):
         """Update status message (legacy method)."""
         self.status_summary_label.setText(message)
-        # TODO: Show message in a toast notification or status area
+
+    def _position_card_feedback_toast(self):
+        if not hasattr(self, "card_feedback_toast"):
+            return
+        toast = self.card_feedback_toast
+        margin = 20
+        top = self.command_bar.height() + margin
+        x = max(margin, self.width() - toast.width() - margin)
+        toast.move(x, top)
+
+    def _build_card_feedback_body(self, sentence: str, note_id=None, reason: str = ""):
+        lines = [
+            f"Target word: {self.selection.word}",
+            f"Translation: {self.selection.translation}",
+            f"Card text: {sentence}",
+        ]
+        if self.current_source_name:
+            lines.append(f"Source: {self.current_source_name}")
+        if self.current_source_location:
+            lines.append(f"Location: {self.current_source_location}")
+        if note_id is not None:
+            lines.append(f"Note ID: {note_id}")
+        if reason:
+            lines.append(f"Reason: {reason}")
+        return "\n".join(lines)
+
+    def _show_card_feedback(self, title: str, sentence: str, variant: str, note_id=None, reason: str = ""):
+        self._set_status(title)
+        self.card_feedback_toast.show_message(
+            title=title,
+            body=self._build_card_feedback_body(sentence, note_id=note_id, reason=reason),
+            variant=variant,
+        )
+        self._position_card_feedback_toast()
 
     def _open_data_folder(self):
         subprocess.Popen(["explorer", str(DATA_ROOT)])
@@ -821,57 +1044,117 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _set_learning_language(self, code):
         self.learning_language = normalize_language_code(code, DEFAULT_LEARNING_LANGUAGE)
-        self.translation_cache.clear()
+        self._reset_translation_cache()
         self.user_data["preferences"]["learning_language"] = self.learning_language
         save_user_data(self.user_data)
         self._set_status(f"Learning language: {get_language_label(self.learning_language)}")
 
     def _set_native_language(self, code):
         self.native_language = normalize_language_code(code, DEFAULT_NATIVE_LANGUAGE)
-        self.translation_cache.clear()
+        self._reset_translation_cache()
         self.user_data["preferences"]["native_language"] = self.native_language
         save_user_data(self.user_data)
         self._set_status(f"Native language: {get_language_label(self.native_language)}")
 
-    def _request_translation(self, text):
+    def _reset_translation_cache(self):
+        self.translation_cache.clear()
+        self._translation_context_version += 1
+
+    def _translation_cache_key(self, text):
+        return (self.learning_language, self.native_language, text)
+
+    def _start_translation_request(self, text, *, visible):
         if not text:
             return
-        key = (self.learning_language, self.native_language, text)
+        key = self._translation_cache_key(text)
         if key in self.translation_cache:
-            self.selected_translation = self.translation_cache[key]
-            self._update_selection_panel()
-            self._update_action_buttons()
+            if visible:
+                self.selection.translation = self.translation_cache[key]
+                self._update_selection_panel()
+                self._update_action_buttons()
             return
 
-        self.current_request_id += 1
-        request_id = self.current_request_id
-        self.selected_translation = "translating..."
-        self._update_selection_panel()
-        self._update_action_buttons()
+        existing_request_id = self._translation_requests_by_key.get(key)
+        if existing_request_id is not None:
+            if visible:
+                self.current_request_id = existing_request_id
+                request = self._translation_requests.get(existing_request_id)
+                if request is not None:
+                    request["visible"] = True
+                self.selection.translation = "translating..."
+                self._update_selection_panel()
+                self._update_action_buttons()
+            return existing_request_id
+
+        self._next_translation_request_id += 1
+        request_id = self._next_translation_request_id
+        if visible:
+            self.current_request_id = request_id
+            self.selection.translation = "translating..."
+            self._update_selection_panel()
+            self._update_action_buttons()
         backend = OnlineTranslationBackend() if self.translation_mode == "online" else OfflineTranslationBackend()
         src_lang, dest_lang = self._get_translation_language_codes()
         task = TranslateTask(request_id, text, src_lang, dest_lang, backend)
-        self._translation_cache_keys_by_request[request_id] = key
+        self._translation_requests[request_id] = {
+            "key": key,
+            "visible": visible,
+            "context_version": self._translation_context_version,
+        }
+        self._translation_requests_by_key[key] = request_id
         task.signals.finished.connect(self._on_translation_done)
         task.signals.failed.connect(self._on_translation_failed)
         self.thread_pool.start(task)
+        return request_id
+
+    def _request_translation(self, text):
+        self._start_translation_request(text, visible=True)
+
+    def _prefetch_translations(self, texts):
+        for text in texts:
+            self._start_translation_request(text, visible=False)
+
+    def _iter_unique_clean_words(self, values):
+        seen = set()
+        for value in values:
+            cleaned = self._clean_word(value)
+            if not cleaned:
+                continue
+            if cleaned in seen:
+                continue
+            seen.add(cleaned)
+            yield cleaned
 
     def _on_translation_done(self, request_id, source_text, translated_text):
-        if request_id != self.current_request_id:
+        request = self._translation_requests.pop(request_id, None)
+        if request is None:
             return
-        key = self._translation_cache_keys_by_request.pop(
-            request_id, (self.learning_language, self.native_language, source_text)
-        )
+        key = request["key"]
+        if self._translation_requests_by_key.get(key) == request_id:
+            self._translation_requests_by_key.pop(key, None)
+        if request["context_version"] != self._translation_context_version:
+            return
         self.translation_cache[key] = translated_text
-        self.selected_translation = translated_text
+        if not request["visible"] or request_id != self.current_request_id:
+            return
+        self.selection.translation = translated_text
         self._update_selection_panel()
         self._update_action_buttons()
 
     def _on_translation_failed(self, request_id, error_message):
-        if request_id != self.current_request_id:
+        request = self._translation_requests.pop(request_id, None)
+        if request is None:
             return
-        self._translation_cache_keys_by_request.pop(request_id, None)
-        self.selected_translation = f"Translation error: {error_message}"
+        key = request["key"]
+        if self._translation_requests_by_key.get(key) == request_id:
+            self._translation_requests_by_key.pop(key, None)
+        if (
+            request["context_version"] != self._translation_context_version
+            or not request["visible"]
+            or request_id != self.current_request_id
+        ):
+            return
+        self.selection.translation = f"Translation error: {error_message}"
         self._update_selection_panel()
         self._update_action_buttons()
         self._set_status(f"Translation failed: {error_message}")
@@ -879,21 +1162,21 @@ class UnifiedSentenceMinerWindow(QMainWindow):
     def _translate_word_field_input(self):
         text = self.word_value.text().strip()
         if not text:
-            self.selected_word = ""
-            self.selected_translation = ""
+            self.selection.word = ""
+            self.selection.translation = ""
             self._update_selection_panel()
             self._update_action_buttons()
             return
-        self.selected_word = text
+        self.selection.word = text
         self._request_translation(text)
 
     def _update_selection_panel(self):
         """Update legacy selection panel and show translation popover."""
         # Update legacy widgets (for backward compatibility)
-        if self.word_value.text() != self.selected_word:
-            self.word_value.setText(self.selected_word)
-        self.sentence_value.setText(self.selected_sentence)
-        self.translation_value.setText(self.selected_translation)
+        if self.word_value.text() != self.selection.word:
+            self.word_value.setText(self.selection.word)
+        self.sentence_value.setText(self.selection.sentence)
+        self.translation_value.setText(self.selection.translation)
         if self.current_source_name:
             self.source_header_label.setText(
                 f"{self.current_source_name} | {self.current_source_location or 'location unavailable'}"
@@ -902,9 +1185,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             self.source_header_label.setText("Nothing selected")
 
         should_show_overlay = bool(
-            self.selected_word
-            and self.selected_translation
-            and not self.selected_translation.startswith("Translation error:")
+            self.selection.word
+            and self.selection.translation
+            and not self.selection.translation.startswith("Translation error:")
         )
         if should_show_overlay:
             self._show_translation_popover()
@@ -912,41 +1195,39 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             self._close_popover()
 
     def _update_action_buttons(self):
-        has_selection = bool(self.selected_word)
+        has_selection = bool(self.selection.word)
         has_translation = bool(
-            self.selected_translation
-            and self.selected_translation != "translating..."
-            and not self.selected_translation.startswith("Translation error:")
+            self.selection.translation
+            and self.selection.translation != "translating..."
+            and not self.selection.translation.startswith("Translation error:")
         )
         self.add_now_button.setEnabled(has_selection and has_translation)
         self.add_queue_button.setEnabled(has_selection and has_translation)
 
     def _clear_selection_state(self):
-        had_pdf_selection = bool(self.highlight_bboxes)
-        self.selected_word = ""
-        self.selected_sentence = ""
-        self.selected_translation = ""
-        self.selected_subtitle_indices = []
-        self.selected_pdf_words = []
-        self.highlight_bboxes = []
-        self.selection_anchor_key = None
+        had_pdf_selection = not self.selection.pdf.is_empty()
+
+        self.selection.clear_all()
+
         if hasattr(self, "subtitle_label"):
             self.subtitle_label.highlight_word_range(None, None)
-        if had_pdf_selection and self.doc and self.current_source_type == "pdf":
+
+        if had_pdf_selection and self.doc and self.mode_manager.current_mode == WorkspaceMode.PDF:
             self._render_current_page()
+
         self._update_selection_panel()
         self._update_action_buttons()
         self._close_popover()
 
     def _show_translation_popover(self):
         """Show the inline translation overlay above the selected span."""
-        if not self.selected_translation or self.selected_translation.startswith("Translation error:"):
+        if not self.selection.translation or self.selection.translation.startswith("Translation error:"):
             return
 
         self.translation_popover.set_content(
-            word=self.selected_word,
-            meaning=self.selected_translation,
-            sentence=self.selected_sentence,
+            word=self.selection.word,
+            meaning=self.selection.translation,
+            sentence=self.selection.sentence,
             sentence_translation="",
             metadata="",
         )
@@ -956,7 +1237,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             self._close_popover()
             return
 
-        self.translation_popover.position_near_word(anchor_rect)
+        # Convert anchor rect from main window coordinates to global screen coordinates
+        anchor_rect_global = QRect(
+            self.mapToGlobal(anchor_rect.topLeft()),
+            anchor_rect.size()
+        )
+
+        self.translation_popover.set_anchor_rect(anchor_rect_global)
+        self.translation_popover.position_near_word(anchor_rect_global)
         self.translation_popover.show_animated()
 
     def _on_popover_edit_requested(self):
@@ -974,19 +1262,19 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             self.translation_popover.close()
 
     def _current_selection_anchor_rect(self):
-        if self.current_source_type == "video":
+        if self.mode_manager.current_mode == WorkspaceMode.VIDEO:
             return self._subtitle_selection_anchor_rect()
-        if self.current_source_type == "pdf":
+        if self.mode_manager.current_mode == WorkspaceMode.PDF:
             return self._pdf_selection_anchor_rect()
         return QRect()
 
     def _subtitle_selection_anchor_rect(self):
-        if not self.selected_subtitle_indices:
+        if not self.selection.video.selected_indices:
             return QRect()
 
         local_rect = self.subtitle_label.selection_anchor_rect(
-            self.selected_subtitle_indices[0],
-            self.selected_subtitle_indices[-1],
+            self.selection.video.selected_indices[0],
+            self.selection.video.selected_indices[-1],
         )
         if local_rect.isNull():
             return QRect()
@@ -995,11 +1283,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         return QRect(top_left, local_rect.size())
 
     def _pdf_selection_anchor_rect(self):
-        if not self.selected_pdf_words:
+        if not self.selection.pdf.selected_words:
             return QRect()
 
-        first_line_key = (int(self.selected_pdf_words[0][5]), int(self.selected_pdf_words[0][6]))
-        first_line_words = [word for word in self.selected_pdf_words if (int(word[5]), int(word[6])) == first_line_key]
+        first_line_key = (int(self.selection.pdf.selected_words[0][5]), int(self.selection.pdf.selected_words[0][6]))
+        first_line_words = [word for word in self.selection.pdf.selected_words if (int(word[5]), int(word[6])) == first_line_key]
         if not first_line_words:
             return QRect()
 
@@ -1028,7 +1316,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         if not self.doc or not (1 <= page_number <= self.doc.page_count):
             return
         self.current_page_index = page_number - 1
-        self.highlight_bboxes = []
+        self.selection.pdf.highlight_bboxes = []
         self._clear_selection_state()
         self._render_current_page()
         self._persist_session()
@@ -1100,7 +1388,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         QTimer.singleShot(3500, self._refresh_anki_status)
 
     def _build_note_sentence(self):
-        sentence = self.selected_sentence or self.selected_word
+        sentence = self.selection.sentence or self.selection.word
         if sentence in self.sentence_counts:
             self.sentence_counts[sentence] += 1
             return f"{sentence} ({self.sentence_counts[sentence]})"
@@ -1119,33 +1407,29 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._update_command_bar_stats()
 
         # Re-render PDF to update word highlighting
-        if self.doc and self.current_source_type == "pdf":
+        if self.doc and self.mode_manager.current_mode == WorkspaceMode.PDF:
             self._render_current_page()
 
     def _queue_payload(self):
         return {
-            "sentence": self.selected_sentence or self.selected_word,
-            "word": self.selected_word,
-            "translation": self.selected_translation,
+            "sentence": self.selection.sentence or self.selection.word,
+            "word": self.selection.word,
+            "translation": self.selection.translation,
             "source_name": self.current_source_name,
-            "source_type": self.current_source_type,
+            "source_type": self.mode_manager.mode_string(),
             "location": self.current_source_location,
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "status": "queued",
         }
 
     def _queue_current_selection_for_later(self, reason: str):
-        append_queue_entry(self._queue_payload())
+        payload = self._queue_payload()
+        append_queue_entry(payload)
         self._refresh_queue_summary()
-        self._set_status(f"Queued '{self.selected_word}' for later: {reason}")
-        QMessageBox.information(
-            self,
-            "Saved for Later",
-            f"Anki is not available, so '{self.selected_word}' was saved to the queue for later processing.",
-        )
+        self._show_card_feedback("Queued for later", payload["sentence"], "queued", reason=reason)
 
     def _add_now(self):
-        if not self.selected_word or not self.selected_translation:
+        if not self.selection.word or not self.selection.translation:
             return
         if not self.is_anki_connected:
             try:
@@ -1154,9 +1438,10 @@ class UnifiedSentenceMinerWindow(QMainWindow):
                 QMessageBox.critical(self, "Queue Write Failed", str(exc))
             return
         try:
-            note_id = add_anki_card(self._build_note_sentence(), self.selected_word, self.selected_translation)
-            self._record_successful_card_add(self.selected_word)
-            self._set_status(f"Added card to Anki (Note ID: {note_id})")
+            note_sentence = self._build_note_sentence()
+            note_id = add_anki_card(note_sentence, self.selection.word, self.selection.translation)
+            self._record_successful_card_add(self.selection.word)
+            self._show_card_feedback("Added to Anki", note_sentence, "added", note_id=note_id)
             self._close_popover()
         except Exception as exc:
             if isinstance(exc, ConnectionError):
@@ -1168,12 +1453,13 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             QMessageBox.critical(self, "Anki Add Failed", str(exc))
 
     def _add_to_queue(self):
-        if not self.selected_word or not self.selected_translation:
+        if not self.selection.word or not self.selection.translation:
             return
         try:
-            append_queue_entry(self._queue_payload())
+            payload = self._queue_payload()
+            append_queue_entry(payload)
             self._refresh_queue_summary()
-            self._set_status(f"Queued '{self.selected_word}'")
+            self._show_card_feedback("Saved to queue", payload["sentence"], "queued")
         except Exception as exc:
             QMessageBox.critical(self, "Queue Write Failed", str(exc))
 
@@ -1232,14 +1518,17 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.current_video_path = ""
         self.current_srt_path = ""
         self.subtitle_parser = None
-        self.current_source_type = ""
         self.current_source_name = ""
         self._clear_selection_state()
-        self.workspace_stack.setCurrentWidget(self.welcome_page)
         self.command_bar.set_title("No document loaded")
         self.command_bar.set_file_loaded(False)
         self.command_bar.set_page_info(0, 0)
         self._persist_session()
+
+        # Update mode manager
+        self.mode_manager.set_pdf_loaded(False)
+        self.mode_manager.set_video_loaded(False)
+        self.mode_manager.set_mode(WorkspaceMode.WELCOME, force=True)
 
     def _load_pdf(self, path, initial_page_index=0):
         try:
@@ -1250,13 +1539,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         self.current_pdf_path = path
         self.current_page_index = max(0, min(initial_page_index, self.doc.page_count - 1))
-        self.current_source_type = "pdf"
         self.current_source_name = Path(path).name
         self.current_source_location = f"Page {self.current_page_index + 1}"
-        self.workspace_stack.setCurrentWidget(self.pdf_page)
         self._clear_selection_state()
-        self.highlight_bboxes = []
-        self.selection_anchor_key = None
         QTimer.singleShot(0, self._fit_width)
         self._update_source_summary()
         self._persist_session()
@@ -1267,10 +1552,13 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             Path(path).name,
             f"{self.doc.page_count} pages"
         )
-        self.command_bar.set_mode("pdf")
         self.command_bar.set_file_loaded(True)
         self.command_bar.set_page_info(self.current_page_index + 1, self.doc.page_count)
         self._update_command_bar_stats()
+
+        # Update mode manager
+        self.mode_manager.set_pdf_loaded(True)
+        self.mode_manager.set_mode(WorkspaceMode.PDF, force=True)
 
     def _render_current_page(self):
         if not self.doc:
@@ -1318,9 +1606,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             painter.fillRect(rect_x, rect_y, rect_w, rect_h, color)
 
         # 2. Draw selection highlight on top (for currently selected word)
-        if self.highlight_bboxes:
+        if self.selection.pdf.highlight_bboxes:
             selection_color = Theme.to_qcolor(Theme.HL_SELECTED)
-            for x0, y0, x1, y1 in self.highlight_bboxes:
+            for x0, y0, x1, y1 in self.selection.pdf.highlight_bboxes:
                 rect_x = int(x0 * self.zoom_factor)
                 rect_y = int(y0 * self.zoom_factor)
                 rect_w = max(1, int((x1 - x0) * self.zoom_factor))
@@ -1335,6 +1623,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         self.page_word_index = {self._word_key(word): idx for idx, word in enumerate(self.page_word_order)}
         self.page_line_words = self._build_line_index(self.page_words)
+        self._prefetch_translations(self._iter_unique_clean_words(word[4] for word in self.page_word_order))
         self.current_source_location = f"Page {self.current_page_index + 1}"
         self._update_source_summary()
         self.command_bar.set_page_info(self.current_page_index + 1, self.doc.page_count)
@@ -1342,11 +1631,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         # Update zoom display in status bar
         self.pdf_status_bar.set_zoom_level(self.zoom_factor)
         if (
-            self.current_source_type == "pdf"
-            and self.selected_pdf_words
-            and self.selected_translation
-            and self.selected_translation != "translating..."
-            and not self.selected_translation.startswith("Translation error:")
+            self.mode_manager.current_mode == WorkspaceMode.PDF
+            and self.selection.pdf.selected_words
+            and self.selection.translation
+            and self.selection.translation != "translating..."
+            and not self.selection.translation.startswith("Translation error:")
         ):
             self._show_translation_popover()
 
@@ -1390,28 +1679,26 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         cleaned_words = [self._clean_word(selected[4]) for selected in selected_words if self._clean_word(selected[4])]
         if not cleaned_words:
             return
-        self.highlight_bboxes = [(w[0], w[1], w[2], w[3]) for w in selected_words]
-        self.selected_pdf_words = list(selected_words)
-        self.selected_subtitle_indices = []
-        self.selected_word = " ".join(cleaned_words)
-        self.selected_sentence = self._extract_context_for_selection(selected_words)
-        self.selected_translation = "translating..."
-        self.current_source_type = "pdf"
+        self.selection.pdf.highlight_bboxes = [(w[0], w[1], w[2], w[3]) for w in selected_words]
+        self.selection.pdf.selected_words = list(selected_words)
+        self.selection.video.selected_indices = []
+        self.selection.word = " ".join(cleaned_words)
+        self.selection.sentence = self._extract_context_for_selection(selected_words)
         self.current_source_location = f"Page {self.current_page_index + 1}"
         self._update_selection_panel()
         self._update_action_buttons()
         self._render_current_page()
-        self._request_translation(self.selected_word)
+        self._request_translation(self.selection.word)
 
     def _resolve_selected_words(self, hit_word, shift_pressed):
         hit_key = self._word_key(hit_word)
-        if not shift_pressed or self.selection_anchor_key is None:
-            self.selection_anchor_key = hit_key
+        if not shift_pressed or self.selection.pdf.anchor_key is None:
+            self.selection.pdf.anchor_key = hit_key
             return [hit_word]
-        anchor_index = self.page_word_index.get(self.selection_anchor_key)
+        anchor_index = self.page_word_index.get(self.selection.pdf.anchor_key)
         hit_index = self.page_word_index.get(hit_key)
         if anchor_index is None or hit_index is None:
-            self.selection_anchor_key = hit_key
+            self.selection.pdf.anchor_key = hit_key
             return [hit_word]
         start_idx = min(anchor_index, hit_index)
         end_idx = max(anchor_index, hit_index)
@@ -1428,7 +1715,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         if not self.doc or self.current_page_index <= 0:
             return
         self.current_page_index -= 1
-        self.highlight_bboxes = []
+        self.selection.pdf.highlight_bboxes = []
         self._clear_selection_state()
         self._render_current_page()
         self._persist_session()
@@ -1437,7 +1724,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         if not self.doc or self.current_page_index >= self.doc.page_count - 1:
             return
         self.current_page_index += 1
-        self.highlight_bboxes = []
+        self.selection.pdf.highlight_bboxes = []
         self._clear_selection_state()
         self._render_current_page()
         self._persist_session()
@@ -1497,10 +1784,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         # Continue with existing loading logic...
         self.current_video_path = path
-        self.current_source_type = "video"
         self.current_source_name = Path(path).name
         self.current_source_location = "00:00"
-        self.workspace_stack.setCurrentWidget(self.video_page)
         self.media_player.setSource(QUrl.fromLocalFile(path))
         if restore_position_ms > 0:
             QTimer.singleShot(400, lambda: self.media_player.setPosition(restore_position_ms))
@@ -1521,9 +1806,12 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             Path(path).name,
             "Video"
         )
-        self.command_bar.set_mode("video")
         self.command_bar.set_file_loaded(True)
         self._update_command_bar_stats()
+
+        # Update mode manager
+        self.mode_manager.set_video_loaded(True)
+        self.mode_manager.set_mode(WorkspaceMode.VIDEO, force=True)
 
     def _load_subtitles(self, srt_path):
         try:
@@ -1567,28 +1855,26 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         cleaned_words = [self._clean_word(words[idx].word) for idx in selected_indices if self._clean_word(words[idx].word)]
         if not cleaned_words:
             return
-        self.selected_word = " ".join(cleaned_words)
-        self.selected_sentence = self.current_subtitle.text
-        self.selected_translation = "translating..."
-        self.selected_subtitle_indices = list(selected_indices)
-        self.selected_pdf_words = []
-        self.current_source_type = "video"
+        self.selection.word = " ".join(cleaned_words)
+        self.selection.sentence = self.current_subtitle.text
+        self.selection.video.selected_indices = list(selected_indices)
+        self.selection.pdf.selected_words = []
         self.current_source_location = self._fmt_ms(self.media_player.position())
         self.subtitle_label.highlight_word_range(selected_indices[0], selected_indices[-1])
         self._update_selection_panel()
         self._update_action_buttons()
-        self._request_translation(self.selected_word)
+        self._request_translation(self.selection.word)
 
     def _resolve_selected_subtitle_indices(self, token_index, shift_pressed, token_count):
         subtitle_index = self.current_subtitle.index if self.current_subtitle else -1
         if (
             not shift_pressed
-            or self.subtitle_selection_anchor is None
-            or self.subtitle_selection_anchor[0] != subtitle_index
+            or self.selection.video.anchor is None
+            or self.selection.video.anchor[0] != subtitle_index
         ):
-            self.subtitle_selection_anchor = (subtitle_index, token_index)
+            self.selection.video.anchor = (subtitle_index, token_index)
             return [token_index]
-        anchor_index = max(0, min(self.subtitle_selection_anchor[1], token_count - 1))
+        anchor_index = max(0, min(self.selection.video.anchor[1], token_count - 1))
         start = min(anchor_index, token_index)
         end = max(anchor_index, token_index)
         return list(range(start, end + 1))
@@ -1606,8 +1892,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
     def _refresh_subtitle_for_position(self, position):
         if not self.subtitle_parser:
             self.current_subtitle = None
-            self.subtitle_selection_anchor = None
-            self.selected_subtitle_indices = []
+            self.selection.video.anchor = None
+            self.selection.video.selected_indices = []
             self.subtitle_label.set_subtitle(None)
             self._close_popover()
             return
@@ -1615,16 +1901,17 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         subtitle = self.subtitle_parser.get_subtitle_at_time(lookup_position)
         if subtitle is None:
             self.current_subtitle = None
-            self.subtitle_selection_anchor = None
-            self.selected_subtitle_indices = []
+            self.selection.video.anchor = None
+            self.selection.video.selected_indices = []
             self.subtitle_label.set_subtitle(None)
             self._close_popover()
             return
         if self.current_subtitle is None or subtitle.index != self.current_subtitle.index:
             self.current_subtitle = subtitle
-            self.subtitle_selection_anchor = None
-            self.selected_subtitle_indices = []
+            self.selection.video.anchor = None
+            self.selection.video.selected_indices = []
             self.subtitle_label.set_subtitle(subtitle)
+            self._prefetch_translations(self._iter_unique_clean_words(word.word for word in subtitle.words))
             self._close_popover()
 
     def _on_duration_changed(self, duration):
@@ -1732,7 +2019,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         subtitle_state = Path(self.current_srt_path).name if self.current_srt_path else "No subtitles"
         self.source_summary_label.setText(
             f"Source: {self.current_source_name}\n"
-            f"Type: {self.current_source_type or 'none'}\n"
+            f"Type: {self.mode_manager.mode_string() or 'none'}\n"
             f"Location: {self.current_source_location or 'n/a'}\n"
             f"Subtitles: {subtitle_state}"
         )
@@ -1741,7 +2028,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         session = self.user_data["last_session"]
         session.update(
             {
-                "content_type": self.current_source_type,
+                "content_type": self.mode_manager.mode_string(),
                 "pdf_path": self.current_pdf_path,
                 "page_index": int(self.current_page_index),
                 "video_path": self.current_video_path,
@@ -1750,9 +2037,12 @@ class UnifiedSentenceMinerWindow(QMainWindow):
                 "subtitle_offset_ms": int(self.subtitle_offset_ms),
             }
         )
-        if self.workspace_stack.currentWidget() == self.video_page:
+
+        # Update workspace view based on mode
+        mode = self.mode_manager.current_mode
+        if mode == WorkspaceMode.VIDEO:
             self.user_data["workspace"]["current_view"] = "video"
-        elif self.workspace_stack.currentWidget() == self.pdf_page:
+        elif mode == WorkspaceMode.PDF:
             self.user_data["workspace"]["current_view"] = "pdf"
         else:
             self.user_data["workspace"]["current_view"] = "welcome"
