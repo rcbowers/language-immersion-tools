@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QProgressBar,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QStackedWidget,
     QTextEdit,
@@ -430,6 +431,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         zoom_out_action.triggered.connect(self._zoom_out)
         self.addAction(zoom_out_action)
 
+        fit_width_action = QAction("Fit to Width", self)
+        fit_width_action.setShortcut(QKeySequence("Ctrl+0"))
+        fit_width_action.triggered.connect(self._fit_width)
+        self.addAction(fit_width_action)
+
         # Close popover
         escape_action = QAction("Close Popover", self)
         escape_action.setShortcut(QKeySequence(Qt.Key.Key_Escape))
@@ -614,9 +620,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         # Left spacer
         main_layout.addStretch(1)
 
-        # Central reading column (600px fixed width)
+        # Central reading column (responsive width: 600-900px)
         reading_column = QWidget()
-        reading_column.setFixedWidth(Theme.READING_COLUMN_WIDTH)
+        reading_column.setMinimumWidth(Theme.READING_COLUMN_MIN_WIDTH)
+        reading_column.setMaximumWidth(Theme.READING_COLUMN_MAX_WIDTH)
+        reading_column.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         column_layout = QVBoxLayout(reading_column)
         column_layout.setContentsMargins(36, 36, 36, 36)
         column_layout.setSpacing(0)
@@ -650,6 +658,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         # Status bar at bottom
         self.pdf_status_bar = PDFStatusBar()
+        # Connect zoom signals
+        self.pdf_status_bar.zoom_in_clicked.connect(self._zoom_in)
+        self.pdf_status_bar.zoom_out_clicked.connect(self._zoom_out)
+        self.pdf_status_bar.fit_width_clicked.connect(self._fit_width)
+        self.pdf_status_bar.reset_zoom_clicked.connect(self._reset_zoom)
         page_layout.addWidget(self.pdf_status_bar)
 
         # Keep page_input for programmatic use (hidden from UI)
@@ -1244,6 +1257,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         # Update chapter rail
         self.chapter_rail.set_current_page(self.current_page_index + 1)
 
+        # Update zoom display in status bar
+        self.pdf_status_bar.set_zoom_level(self.zoom_factor)
+
     def _build_line_index(self, words):
         line_map = {}
         for word in words:
@@ -1343,11 +1359,21 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             self.zoom_factor = max(0.5, self.zoom_factor - 0.25)
             self._render_current_page()
 
+    def _reset_zoom(self):
+        """Reset zoom to 100% (factor 2.0)."""
+        if self.doc:
+            self.zoom_factor = 2.0
+            self._render_current_page()
+
     def _fit_width(self):
+        """Fit PDF to reading column width."""
         if not self.doc:
             return
         page = self.doc.load_page(self.current_page_index)
-        available = max(200, self.scroll_area.viewport().width() - 24)
+        # Get reading column widget (parent of scroll_area)
+        reading_column = self.scroll_area.parent()
+        # Account for margins (36px on each side = 72px total)
+        available = max(200, reading_column.width() - 72)
         self.zoom_factor = max(0.5, min(4.0, available / page.rect.width))
         self._render_current_page()
 
