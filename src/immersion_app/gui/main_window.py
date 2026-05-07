@@ -11,7 +11,7 @@ from pathlib import Path
 
 import fitz
 from PySide6.QtCore import QObject, QPoint, QRect, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QAction, QActionGroup, QImage, QIntValidator, QKeySequence, QPainter, QPen, QPixmap
+from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -38,7 +38,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from immersion_app.core.anki import add_anki_card, test_anki_connection
+from immersion_app.core.anki import add_anki_card, fetch_deck_words, test_anki_connection
+from immersion_app.core.anki_snapshot import load_snapshot, save_snapshot
 from immersion_app.core.language_config import (
     DEFAULT_LEARNING_LANGUAGE,
     DEFAULT_NATIVE_LANGUAGE,
@@ -55,7 +56,6 @@ from immersion_app.core.user_data import load_user_data, save_user_data
 from immersion_app.gui.widgets.subtitle_widget import ClickableSubtitleLabel
 from immersion_app.gui.widgets.command_bar import CommandBar
 from immersion_app.gui.widgets.translation_popover import TranslationPopover
-from immersion_app.gui.widgets.chapter_rail import ChapterRail
 from immersion_app.gui.widgets.pdf_status_bar import PDFStatusBar
 from immersion_app.gui.widgets.transport_bar import TransportBar
 from immersion_app.gui.theme import Theme
@@ -97,7 +97,7 @@ class TranslateTask(QRunnable):
 
 
 class AnkiStatusSignals(QObject):
-    finished = Signal(int, bool)
+    finished = Signal(int, bool, object)
 
 
 class AnkiStatusTask(QRunnable):
@@ -108,7 +108,9 @@ class AnkiStatusTask(QRunnable):
 
     def run(self):
         try:
-            self.signals.finished.emit(self.request_id, test_anki_connection())
+            connected = test_anki_connection()
+            words = fetch_deck_words() if connected else None
+            self.signals.finished.emit(self.request_id, connected, words)
         except RuntimeError:
             return
 
@@ -284,6 +286,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._translation_cache_keys_by_request = {}
         self.user_data = load_user_data()
         self.analytics_vocabulary = set(self.user_data.get("analytics", {}).get("vocabulary_seen", []))
+        self.analytics_vocabulary.update(load_snapshot())
 
         self.selected_word = ""
         self.selected_sentence = ""
@@ -341,6 +344,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.command_bar.open_requested.connect(self._open_content_dialog)
         self.command_bar.close_requested.connect(self._close_current_file)
         self.command_bar.settings_requested.connect(self._show_settings_dialog)
+        self.command_bar.page_jump_requested.connect(self._jump_to_page)
         main_layout.addWidget(self.command_bar)
 
         # Workspace stack (Welcome/PDF/Video pages)
@@ -373,37 +377,37 @@ class UnifiedSentenceMinerWindow(QMainWindow):
     def _setup_keyboard_shortcuts(self):
         """Setup global keyboard shortcuts."""
         # Mode switching
-        pdf_mode_action = QAction("PDF Mode", self)
-        pdf_mode_action.setShortcut(QKeySequence("Ctrl+1"))
-        pdf_mode_action.triggered.connect(lambda: self._on_mode_changed("pdf"))
-        self.addAction(pdf_mode_action)
+        self._sc_pdf_mode = QAction("PDF Mode", self)
+        self._sc_pdf_mode.setShortcut(QKeySequence("Ctrl+1"))
+        self._sc_pdf_mode.triggered.connect(lambda: self._on_mode_changed("pdf"))
+        self.addAction(self._sc_pdf_mode)
 
-        video_mode_action = QAction("Video Mode", self)
-        video_mode_action.setShortcut(QKeySequence("Ctrl+2"))
-        video_mode_action.triggered.connect(lambda: self._on_mode_changed("video"))
-        self.addAction(video_mode_action)
+        self._sc_video_mode = QAction("Video Mode", self)
+        self._sc_video_mode.setShortcut(QKeySequence("Ctrl+2"))
+        self._sc_video_mode.triggered.connect(lambda: self._on_mode_changed("video"))
+        self.addAction(self._sc_video_mode)
 
         # File operations
-        open_action = QAction("Open source", self)
-        open_action.setShortcut(QKeySequence("Ctrl+O"))
-        open_action.triggered.connect(self._open_content_dialog)
-        self.addAction(open_action)
+        self._sc_open = QAction("Open source", self)
+        self._sc_open.setShortcut(QKeySequence("Ctrl+O"))
+        self._sc_open.triggered.connect(self._open_content_dialog)
+        self.addAction(self._sc_open)
 
-        load_subs_action = QAction("Load subtitles", self)
-        load_subs_action.setShortcut(QKeySequence("Ctrl+L"))
-        load_subs_action.triggered.connect(self._open_subtitle_dialog)
-        self.addAction(load_subs_action)
+        self._sc_load_subs = QAction("Load subtitles", self)
+        self._sc_load_subs.setShortcut(QKeySequence("Ctrl+L"))
+        self._sc_load_subs.triggered.connect(self._open_subtitle_dialog)
+        self.addAction(self._sc_load_subs)
 
         # Study actions
-        add_now_action = QAction("Add now", self)
-        add_now_action.setShortcut(QKeySequence("Ctrl+Return"))
-        add_now_action.triggered.connect(self._add_now)
-        self.addAction(add_now_action)
+        self._sc_add_now = QAction("Add now", self)
+        self._sc_add_now.setShortcut(QKeySequence("Ctrl+Return"))
+        self._sc_add_now.triggered.connect(self._add_now)
+        self.addAction(self._sc_add_now)
 
-        add_queue_action = QAction("Add to queue", self)
-        add_queue_action.setShortcut(QKeySequence("Ctrl+Shift+Return"))
-        add_queue_action.triggered.connect(self._add_to_queue)
-        self.addAction(add_queue_action)
+        self._sc_add_queue = QAction("Add to queue", self)
+        self._sc_add_queue.setShortcut(QKeySequence("Ctrl+Shift+Return"))
+        self._sc_add_queue.triggered.connect(self._add_to_queue)
+        self.addAction(self._sc_add_queue)
 
         # Video playback
         play_action = QAction("Play/Pause", self)
@@ -423,20 +427,20 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.addAction(next_page_action)
 
         # PDF zoom
-        zoom_in_action = QAction("Zoom In", self)
-        zoom_in_action.setShortcut(QKeySequence("Ctrl++"))
-        zoom_in_action.triggered.connect(self._zoom_in)
-        self.addAction(zoom_in_action)
+        self._sc_zoom_in = QAction("Zoom In", self)
+        self._sc_zoom_in.setShortcut(QKeySequence("Ctrl++"))
+        self._sc_zoom_in.triggered.connect(self._zoom_in)
+        self.addAction(self._sc_zoom_in)
 
-        zoom_out_action = QAction("Zoom Out", self)
-        zoom_out_action.setShortcut(QKeySequence("Ctrl+-"))
-        zoom_out_action.triggered.connect(self._zoom_out)
-        self.addAction(zoom_out_action)
+        self._sc_zoom_out = QAction("Zoom Out", self)
+        self._sc_zoom_out.setShortcut(QKeySequence("Ctrl+-"))
+        self._sc_zoom_out.triggered.connect(self._zoom_out)
+        self.addAction(self._sc_zoom_out)
 
-        fit_width_action = QAction("Fit to Width", self)
-        fit_width_action.setShortcut(QKeySequence("Ctrl+0"))
-        fit_width_action.triggered.connect(self._fit_width)
-        self.addAction(fit_width_action)
+        self._sc_fit_width = QAction("Fit to Width", self)
+        self._sc_fit_width.setShortcut(QKeySequence("Ctrl+0"))
+        self._sc_fit_width.triggered.connect(self._fit_width)
+        self.addAction(self._sc_fit_width)
 
         # Close popover
         escape_action = QAction("Close Popover", self)
@@ -449,9 +453,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         if mode == "pdf":
             if self.doc:
                 self.workspace_stack.setCurrentWidget(self.pdf_page)
+                self.command_bar.set_page_info(self.current_page_index + 1, self.doc.page_count)
             else:
                 self.workspace_stack.setCurrentWidget(self.welcome_page)
         elif mode == "video":
+            self.command_bar.set_page_info(0, 0)
             if self.current_video_path:
                 self.workspace_stack.setCurrentWidget(self.video_page)
             else:
@@ -491,6 +497,20 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         menu.addAction("Start Anki", self._start_anki)
         menu.addAction("Check Anki", self._refresh_anki_status)
         menu.addAction("Generate subtitles", self._generate_subtitles_interactive)
+
+        menu.addSeparator()
+        menu.addAction(self._sc_pdf_mode)
+        menu.addAction(self._sc_video_mode)
+        menu.addSeparator()
+        menu.addAction(self._sc_open)
+        menu.addAction(self._sc_load_subs)
+        menu.addSeparator()
+        menu.addAction(self._sc_add_now)
+        menu.addAction(self._sc_add_queue)
+        menu.addSeparator()
+        menu.addAction(self._sc_zoom_in)
+        menu.addAction(self._sc_zoom_out)
+        menu.addAction(self._sc_fit_width)
 
         # Show menu at settings button
         button_pos = self.command_bar.settings_button.mapToGlobal(
@@ -623,14 +643,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Left spacer
-        main_layout.addStretch(1)
-
-        # Central reading column (responsive width: 600-900px)
+        # Central reading column
         reading_column = QWidget()
-        reading_column.setMinimumWidth(Theme.READING_COLUMN_MIN_WIDTH)
-        reading_column.setMaximumWidth(Theme.READING_COLUMN_MAX_WIDTH)
-        reading_column.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        reading_column.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         column_layout = QVBoxLayout(reading_column)
         column_layout.setContentsMargins(36, 36, 36, 36)
         column_layout.setSpacing(0)
@@ -641,6 +656,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.pdf_label.clicked.connect(self._on_pdf_click)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(False)
+        self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self.scroll_area.setWidget(self.pdf_label)
         self.scroll_area.setStyleSheet(f"""
             QScrollArea {{
@@ -651,34 +667,15 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         column_layout.addWidget(self.scroll_area)
 
         main_layout.addWidget(reading_column)
-
-        # Right spacer
-        main_layout.addStretch(1)
-
-        # Chapter rail (48px, right edge)
-        self.chapter_rail = ChapterRail()
-        self.chapter_rail.chapter_clicked.connect(self._on_chapter_clicked)
-        main_layout.addWidget(self.chapter_rail)
-
         page_layout.addLayout(main_layout)
 
         # Status bar at bottom
         self.pdf_status_bar = PDFStatusBar()
-        # Connect zoom signals
         self.pdf_status_bar.zoom_in_clicked.connect(self._zoom_in)
         self.pdf_status_bar.zoom_out_clicked.connect(self._zoom_out)
         self.pdf_status_bar.fit_width_clicked.connect(self._fit_width)
         self.pdf_status_bar.reset_zoom_clicked.connect(self._reset_zoom)
         page_layout.addWidget(self.pdf_status_bar)
-
-        # Keep page_input for programmatic use (hidden from UI)
-        self.page_input = QLineEdit()
-        self.page_input.setValidator(QIntValidator(1, 1, self))
-        self.page_input.setVisible(False)
-
-        # Page info label (legacy, hidden)
-        self.page_info_label = QLabel("No PDF loaded")
-        self.page_info_label.setVisible(False)
 
         return page
 
@@ -989,14 +986,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         today_count = 0
         self.command_bar.set_stats(today_count, total_count)
 
-    def _on_chapter_clicked(self, page_number):
-        """Navigate to a chapter when clicked in the chapter rail."""
-        if self.doc and 1 <= page_number <= self.doc.page_count:
-            self.current_page_index = page_number - 1
-            self.highlight_bboxes = []
-            self._clear_selection_state()
-            self._render_current_page()
-            self._persist_session()
+    def _jump_to_page(self, page_number: int):
+        if not self.doc or not (1 <= page_number <= self.doc.page_count):
+            return
+        self.current_page_index = page_number - 1
+        self.highlight_bboxes = []
+        self._clear_selection_state()
+        self._render_current_page()
+        self._persist_session()
 
     def _replay_subtitle(self):
         """Jump to the start of the current subtitle."""
@@ -1030,7 +1027,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         task.signals.finished.connect(self._on_anki_status_checked)
         self.thread_pool.start(task)
 
-    def _on_anki_status_checked(self, request_id, connected):
+    def _on_anki_status_checked(self, request_id, connected, words):
         if request_id != self.anki_check_request_id:
             return
         self.is_anki_connected = connected
@@ -1038,6 +1035,16 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.health_label.setText(
             f"Anki: {'ready' if connected else 'not connected'}\nTranslation backend: {self.translation_mode}"
         )
+        if words is not None:
+            save_snapshot(words)
+            self.analytics_vocabulary.update(words)
+            self._refresh_word_highlights()
+
+    def _refresh_word_highlights(self):
+        if self.doc and self.current_pdf_path:
+            self._render_current_page()
+        if hasattr(self, "subtitle_label"):
+            self.subtitle_label.set_vocabulary_seen(self.analytics_vocabulary)
 
     def _start_anki(self):
         if not os.path.exists(ANKI_PATH):
@@ -1170,6 +1177,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.workspace_stack.setCurrentWidget(self.welcome_page)
         self.command_bar.set_title("No document loaded")
         self.command_bar.set_file_loaded(False)
+        self.command_bar.set_page_info(0, 0)
         self._persist_session()
 
     def _load_pdf(self, path, initial_page_index=0):
@@ -1181,7 +1189,6 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         self.current_pdf_path = path
         self.current_page_index = max(0, min(initial_page_index, self.doc.page_count - 1))
-        self.page_input.setValidator(QIntValidator(1, self.doc.page_count, self))
         self.current_source_type = "pdf"
         self.current_source_name = Path(path).name
         self.current_source_location = f"Page {self.current_page_index + 1}"
@@ -1189,7 +1196,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._clear_selection_state()
         self.highlight_bboxes = []
         self.selection_anchor_key = None
-        self._render_current_page()
+        QTimer.singleShot(0, self._fit_width)
         self._update_source_summary()
         self._persist_session()
         self._set_status(f"Opened PDF: {Path(path).name}")
@@ -1201,18 +1208,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         )
         self.command_bar.set_mode("pdf")
         self.command_bar.set_file_loaded(True)
+        self.command_bar.set_page_info(self.current_page_index + 1, self.doc.page_count)
         self._update_command_bar_stats()
-
-        # Update chapter rail with PDF outline
-        try:
-            toc = self.doc.get_toc()
-            self.chapter_rail.set_chapters(toc, self.doc.page_count)
-        except Exception:
-            self.chapter_rail.set_chapters([], self.doc.page_count)
 
     def _render_current_page(self):
         if not self.doc:
-            self.page_info_label.setText("No PDF loaded")
             return
 
         page = self.doc.load_page(self.current_page_index)
@@ -1274,15 +1274,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         self.page_word_index = {self._word_key(word): idx for idx, word in enumerate(self.page_word_order)}
         self.page_line_words = self._build_line_index(self.page_words)
-        self.page_info_label.setText(
-            f"{Path(self.current_pdf_path).name} | Page {self.current_page_index + 1}/{self.doc.page_count} | Zoom {self.zoom_factor:.2f}x"
-        )
-        self.page_input.setText(str(self.current_page_index + 1))
         self.current_source_location = f"Page {self.current_page_index + 1}"
         self._update_source_summary()
-
-        # Update chapter rail
-        self.chapter_rail.set_current_page(self.current_page_index + 1)
+        self.command_bar.set_page_info(self.current_page_index + 1, self.doc.page_count)
 
         # Update zoom display in status bar
         self.pdf_status_bar.set_zoom_level(self.zoom_factor)
@@ -1404,22 +1398,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.zoom_factor = max(0.5, min(4.0, available / page.rect.width))
         self._render_current_page()
 
-    def _go_to_page(self):
-        if not self.doc:
-            return
-        try:
-            requested_page = int(self.page_input.text().strip())
-        except ValueError:
-            self._set_status("Invalid page number")
-            return
-        if requested_page < 1 or requested_page > self.doc.page_count:
-            self._set_status(f"Page must be between 1 and {self.doc.page_count}")
-            return
-        self.current_page_index = requested_page - 1
-        self.highlight_bboxes = []
-        self._clear_selection_state()
-        self._render_current_page()
-        self._persist_session()
+
 
     def _open_subtitle_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, "Load subtitles", "", "SRT Files (*.srt)")
