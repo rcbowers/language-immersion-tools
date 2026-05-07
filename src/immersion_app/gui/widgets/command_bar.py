@@ -5,6 +5,7 @@ Provides mode switching, document title, stats, search, and settings access.
 """
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QWidget,
     QHBoxLayout,
@@ -163,10 +164,12 @@ class CommandBar(QWidget):
     close_requested = Signal()
     search_requested = Signal()
     settings_requested = Signal()
+    page_jump_requested = Signal(int)  # 1-based page number
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
+        self._total_pages = 0
         self.setFixedHeight(Theme.COMMAND_BAR_HEIGHT)
         self._apply_background()
 
@@ -206,6 +209,54 @@ class CommandBar(QWidget):
         # Spacer
         layout.addStretch()
 
+        # Page navigation: [current] / [total]
+        self.page_current_input = QLineEdit()
+        self.page_current_input.setFixedWidth(44)
+        self.page_current_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_current_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {Theme.SURFACE_ALT};
+                color: {Theme.TEXT};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 5px;
+                padding: 3px 6px;
+                font-family: {Theme.FONT_MONO};
+                font-size: 12px;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {Theme.ACCENT_BORDER};
+                background-color: {Theme.SURFACE};
+            }}
+        """)
+        self.page_current_input.returnPressed.connect(self._on_page_input_committed)
+        self.page_current_input.setVisible(False)
+
+        self.page_separator = QLabel("/")
+        self.page_separator.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_MUTED};
+                font-family: {Theme.FONT_MONO};
+                font-size: 12px;
+                padding: 0 2px;
+            }}
+        """)
+        self.page_separator.setVisible(False)
+
+        self.page_total_label = QLabel("0")
+        self.page_total_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_MUTED};
+                font-family: {Theme.FONT_MONO};
+                font-size: 12px;
+            }}
+        """)
+        self.page_total_label.setVisible(False)
+
+        layout.addWidget(self.page_current_input)
+        layout.addWidget(self.page_separator)
+        layout.addWidget(self.page_total_label)
+        layout.addSpacing(8)
+
         # Stats chip
         self.stats_chip = StatsChip()
         layout.addWidget(self.stats_chip)
@@ -244,3 +295,23 @@ class CommandBar(QWidget):
     def set_file_loaded(self, loaded: bool):
         """Show or hide the close button based on whether a file is loaded."""
         self.close_button.setVisible(loaded)
+
+    def set_page_info(self, current: int, total: int):
+        """Show/update page counter. Pass total=0 to hide."""
+        visible = total > 0
+        self.page_current_input.setVisible(visible)
+        self.page_separator.setVisible(visible)
+        self.page_total_label.setVisible(visible)
+        if visible:
+            self._total_pages = total
+            self.page_current_input.setValidator(QIntValidator(1, total, self))
+            self.page_current_input.setText(str(current))
+            self.page_total_label.setText(str(total))
+
+    def _on_page_input_committed(self):
+        text = self.page_current_input.text().strip()
+        if not text.isdigit():
+            return
+        page = max(1, min(int(text), self._total_pages))
+        self.page_current_input.clearFocus()
+        self.page_jump_requested.emit(page)

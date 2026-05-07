@@ -16,6 +16,7 @@ STATE_DIR = DATA_ROOT / "state"
 QUEUE_JSON_PATH = QUEUE_DIR / "queued_cards.json"
 PROCESSED_LOG_PATH = LOG_DIR / "processed_cards.log"
 USER_STATE_PATH = STATE_DIR / "sentence_miner_user_data.json"
+ANKI_SNAPSHOT_PATH = STATE_DIR / "anki_snapshot.json"
 
 LEGACY_QUEUE_PATH = PROJECT_ROOT / "words_to_process.txt"
 LEGACY_PROCESSED_PATH = PROJECT_ROOT / "processed_words.txt"

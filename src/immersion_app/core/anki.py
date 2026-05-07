@@ -61,6 +61,27 @@ def highlight_word_in_sentence(sentence, target_word):
     )
 
 
+def fetch_deck_words() -> set:
+    note_ids = anki_connect_invoke("findNotes", query=f"deck:{DECK_NAME}")
+    if not note_ids:
+        return set()
+    notes = anki_connect_invoke("notesInfo", notes=note_ids)
+    words: set[str] = set()
+    span_re = re.compile(r'<span[^>]*color:\s*red[^>]*>(.*?)</span>', re.IGNORECASE)
+    tag_re = re.compile(r'<[^>]+>')
+    for note in notes:
+        front = note.get("fields", {}).get("Front", {}).get("value", "")
+        match = span_re.search(front)
+        if match:
+            word = tag_re.sub("", match.group(1)).strip().lower()
+            if word:
+                words.add(word)
+        else:
+            text = tag_re.sub("", front).strip().lower()
+            words.update(w for w in re.findall(r"\b\w+\b", text, flags=re.UNICODE) if w)
+    return words
+
+
 def add_anki_card(sentence, target_word, translation):
     note = {
         "deckName": DECK_NAME,
