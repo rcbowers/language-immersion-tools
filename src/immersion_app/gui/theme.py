@@ -33,7 +33,7 @@ class Theme:
     # Word Highlight States
     HL_SEEN = "rgba(91,108,255,0.10)"    # Previously added to Anki
     HL_NEW = "rgba(91,108,255,0.22)"     # Never seen before
-    HL_SELECTED = "#5b6cff"              # Currently focused
+    HL_SELECTED = "rgba(91,108,255,0.35)"  # Currently focused
 
     # Typography
     FONT_FAMILY = "Inter"
@@ -59,8 +59,8 @@ class Theme:
     TRANSPORT_BAR_HEIGHT = 38
     STATUS_BAR_HEIGHT = 32
     CHAPTER_RAIL_WIDTH = 48
-    READING_COLUMN_WIDTH = 1000
-    READING_COLUMN_MIN_WIDTH = 1000
+    READING_COLUMN_WIDTH = 1200
+    READING_COLUMN_MIN_WIDTH = 1200
     READING_COLUMN_MAX_WIDTH = 1300
     POPOVER_WIDTH = 320
 

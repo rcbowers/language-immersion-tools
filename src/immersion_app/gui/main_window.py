@@ -447,9 +447,13 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         if mode == "pdf":
             if self.doc:
                 self.workspace_stack.setCurrentWidget(self.pdf_page)
+            else:
+                self.workspace_stack.setCurrentWidget(self.welcome_page)
         elif mode == "video":
-            if self.media_player.source().isValid():
+            if self.current_video_path:
                 self.workspace_stack.setCurrentWidget(self.video_page)
+            else:
+                self.workspace_stack.setCurrentWidget(self.welcome_page)
 
     def _show_settings_dialog(self):
         """Show settings dialog (stub for now - will implement later)."""
@@ -726,6 +730,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.media_player.positionChanged.connect(self._on_position_changed)
         self.media_player.durationChanged.connect(self._on_duration_changed)
         self.media_player.playbackStateChanged.connect(self._on_playback_state_changed)
+        self.media_player.errorOccurred.connect(self._on_media_error)
+        self.media_player.mediaStatusChanged.connect(self._on_media_status_changed)
 
         return page
 
@@ -1401,6 +1407,23 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._load_subtitles(path)
 
     def _load_video(self, path, restore_position_ms=0):
+        """Load video with validation and error handling."""
+        # Validate file exists
+        video_path = Path(path)
+        if not video_path.exists():
+            QMessageBox.critical(self, "File Not Found", f"Video file does not exist:\n{path}")
+            return
+
+        # Validate file size (detect empty/corrupt files)
+        if video_path.stat().st_size < 1024:  # Less than 1KB
+            QMessageBox.warning(
+                self,
+                "Invalid File",
+                f"Video file appears to be empty or corrupted:\n{video_path.name}"
+            )
+            return
+
+        # Continue with existing loading logic...
         self.current_video_path = path
         self.current_source_type = "video"
         self.current_source_name = Path(path).name
@@ -1419,7 +1442,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             self.subtitle_label.set_subtitle(None)
         self._update_source_summary()
         self._persist_session()
-        self._set_status(f"Loaded video: {Path(path).name}")
+        # Note: Don't set "Loaded video" status immediately - wait for mediaStatusChanged
 
         # Update command bar
         self.command_bar.set_title(
@@ -1559,6 +1582,59 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _on_slider_moved(self, value):
         self.time_label.setText(f"{self._fmt_ms(value)} / {self._fmt_ms(self.media_player.duration())}")
+
+    def _on_media_error(self, error, error_string):
+        """Handle QMediaPlayer errors with user-friendly messages."""
+        from PySide6.QtMultimedia import QMediaPlayer
+
+        if error == QMediaPlayer.Error.NoError:
+            return
+
+        # Log technical details
+        print(f"[VIDEO ERROR] {error}: {error_string} | File: {self.current_video_path}")
+
+        # Map to user-friendly messages
+        error_messages = {
+            QMediaPlayer.Error.ResourceError: "Could not access the video file. Check the file path and permissions.",
+            QMediaPlayer.Error.FormatError: "Video format or codec not supported. Try converting to H.264/MP4.",
+            QMediaPlayer.Error.NetworkError: "Network error occurred while loading the video.",
+            QMediaPlayer.Error.AccessDeniedError: "Permission denied. Cannot access this video file.",
+            QMediaPlayer.Error.ServiceMissingError: "Media playback service unavailable.",
+        }
+
+        user_message = error_messages.get(error, "Unknown video playback error")
+        file_name = Path(self.current_video_path).name if self.current_video_path else "Unknown"
+
+        detailed_message = f"{user_message}\n\nFile: {file_name}"
+
+        if error == QMediaPlayer.Error.FormatError:
+            detailed_message += "\n\nThis may be due to an unsupported codec (e.g., AV1)."
+            detailed_message += "\nRecommended: Convert to H.264 codec with MP4 container."
+
+        QMessageBox.critical(self, "Video Playback Error", detailed_message)
+        self._set_status(f"Failed to load video: {user_message}")
+
+    def _on_media_status_changed(self, status):
+        """Monitor media loading status and detect issues early."""
+        from PySide6.QtMultimedia import QMediaPlayer
+
+        print(f"[VIDEO STATUS] Media status: {status}")
+
+        if status == QMediaPlayer.MediaStatus.InvalidMedia:
+            file_name = Path(self.current_video_path).name if self.current_video_path else "Unknown"
+            QMessageBox.warning(
+                self,
+                "Invalid Video",
+                f"The video file could not be loaded: {file_name}\n\n"
+                "This may be due to:\n"
+                "• Unsupported codec (e.g., AV1)\n"
+                "• Corrupted file\n"
+                "• Incomplete download\n\n"
+                "Try converting to H.264/MP4 format."
+            )
+            self._set_status("Invalid video file")
+        elif status == QMediaPlayer.MediaStatus.LoadedMedia:
+            self._set_status(f"Video ready: {Path(self.current_video_path).name}")
 
     def _fmt_ms(self, ms):
         total_sec = max(0, int(ms // 1000))
