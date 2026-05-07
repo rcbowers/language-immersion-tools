@@ -55,30 +55,40 @@ def highlight_word_in_sentence(sentence, target_word):
     pattern = re.escape(target_word_escaped)
     return re.sub(
         f"({pattern})",
-        r'<span style="color: red;">\1</span>',
+        r'<span style="color: red;">[\1]</span>',
         sentence_escaped,
         flags=re.IGNORECASE,
     )
 
 
 def fetch_deck_words() -> set:
-    note_ids = anki_connect_invoke("findNotes", query=f"deck:{DECK_NAME}")
+    print(f"[anki] fetch_deck_words: querying deck '{DECK_NAME}'")
+    note_ids = anki_connect_invoke("findNotes", query=f'deck:"{DECK_NAME}"')
+    print(f"[anki] fetch_deck_words: found {len(note_ids)} note IDs")
     if not note_ids:
         return set()
     notes = anki_connect_invoke("notesInfo", notes=note_ids)
+    print(f"[anki] fetch_deck_words: got info for {len(notes)} notes")
     words: set[str] = set()
     span_re = re.compile(r'<span[^>]*color:\s*red[^>]*>(.*?)</span>', re.IGNORECASE)
+    bracket_re = re.compile(r'\[([^\[\]]+)\]')
     tag_re = re.compile(r'<[^>]+>')
     for note in notes:
         front = note.get("fields", {}).get("Front", {}).get("value", "")
-        match = span_re.search(front)
-        if match:
-            word = tag_re.sub("", match.group(1)).strip().lower()
-            if word:
-                words.add(word)
+        word = None
+        span_match = span_re.search(front)
+        if span_match:
+            inner = tag_re.sub("", span_match.group(1)).strip()
+            bracket_match = bracket_re.search(inner)
+            word = bracket_match.group(1).strip().lower() if bracket_match else inner.lower()
         else:
-            text = tag_re.sub("", front).strip().lower()
-            words.update(w for w in re.findall(r"\b\w+\b", text, flags=re.UNICODE) if w)
+            text = tag_re.sub("", front)
+            bracket_match = bracket_re.search(text)
+            if bracket_match:
+                word = bracket_match.group(1).strip().lower()
+        if word:
+            words.add(word)
+    print(f"[anki] fetch_deck_words: extracted {len(words)} words: {sorted(words)[:10]}{'...' if len(words) > 10 else ''}")
     return words
 
 

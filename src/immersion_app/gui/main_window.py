@@ -287,6 +287,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.user_data = load_user_data()
         self.analytics_vocabulary = set(self.user_data.get("analytics", {}).get("vocabulary_seen", []))
         self.analytics_vocabulary.update(load_snapshot())
+        print(f"[main] __init__: analytics_vocabulary seeded with {len(self.analytics_vocabulary)} words at startup")
 
         self.selected_word = ""
         self.selected_sentence = ""
@@ -1029,7 +1030,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _on_anki_status_checked(self, request_id, connected, words):
         if request_id != self.anki_check_request_id:
+            print(f"[main] _on_anki_status_checked: stale request {request_id} (current={self.anki_check_request_id}), ignoring")
             return
+        print(f"[main] _on_anki_status_checked: connected={connected}, words={'None' if words is None else len(words)}")
         self.is_anki_connected = connected
         self.anki_status_label.setText("Anki: connected" if connected else "Anki: not connected")
         self.health_label.setText(
@@ -1038,6 +1041,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         if words is not None:
             save_snapshot(words)
             self.analytics_vocabulary.update(words)
+            print(f"[main] analytics_vocabulary now has {len(self.analytics_vocabulary)} words total")
             self._refresh_word_highlights()
 
     def _refresh_word_highlights(self):
@@ -1680,17 +1684,35 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _restore_last_session(self):
         session = self.user_data["last_session"]
+        content_type = str(session.get("content_type") or "")
         pdf_path = str(session.get("pdf_path") or "")
         video_path = str(session.get("video_path") or "")
-        if video_path and Path(video_path).exists():
-            self.subtitle_offset_ms = int(session.get("subtitle_offset_ms") or 0)
-            self._load_video(video_path, restore_position_ms=int(session.get("video_position_ms") or 0))
-            srt_path = str(session.get("srt_path") or "")
-            if srt_path and Path(srt_path).exists():
-                self._load_subtitles(srt_path)
-            return
-        if pdf_path and Path(pdf_path).exists():
-            self._load_pdf(pdf_path, initial_page_index=int(session.get("page_index") or 0))
+
+        def _try_video():
+            if video_path and Path(video_path).exists():
+                self.subtitle_offset_ms = int(session.get("subtitle_offset_ms") or 0)
+                self._load_video(video_path, restore_position_ms=int(session.get("video_position_ms") or 0))
+                srt_path = str(session.get("srt_path") or "")
+                if srt_path and Path(srt_path).exists():
+                    self._load_subtitles(srt_path)
+                return True
+            return False
+
+        def _try_pdf():
+            if pdf_path and Path(pdf_path).exists():
+                self._load_pdf(pdf_path, initial_page_index=int(session.get("page_index") or 0))
+                return True
+            return False
+
+        if content_type == "pdf":
+            if _try_pdf() or _try_video():
+                return
+        else:
+            if _try_video() or _try_pdf():
+                return
+
+        if content_type in ("pdf", "video"):
+            self.command_bar.set_mode(content_type)
 
     def closeEvent(self, event):
         self._persist_session()
