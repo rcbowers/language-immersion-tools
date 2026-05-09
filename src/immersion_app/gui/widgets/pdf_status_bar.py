@@ -124,9 +124,9 @@ class PDFStatusBar(QWidget):
             }}
             QLabel:hover {{
                 background-color: {Theme.SURFACE_ALT};
-                cursor: pointer;
             }}
         """)
+        self.zoom_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.zoom_label.mousePressEvent = lambda e: self.reset_zoom_clicked.emit()
         self.zoom_label.setToolTip("Click to reset zoom to 100%")
         zoom_layout.addWidget(self.zoom_label)
@@ -192,6 +192,21 @@ class PDFStatusBar(QWidget):
 
         layout.addWidget(zoom_container, alignment=Qt.AlignmentFlag.AlignVCenter)
 
+        # Translation mode indicator
+        self.translation_mode_label = QLabel("Translation: Offline")
+        self.translation_mode_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_SOFT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 11px;
+                font-weight: {Theme.FONT_WEIGHT_MEDIUM};
+                padding: 3px 8px;
+                border-radius: 4px;
+                background-color: {Theme.SURFACE_ALT};
+            }}
+        """)
+        layout.addWidget(self.translation_mode_label, alignment=Qt.AlignmentFlag.AlignVCenter)
+
         # Instruction text
         instruction = QLabel("Click any word to translate · ⏎")
         instruction.setStyleSheet(f"""
@@ -215,3 +230,8 @@ class PDFStatusBar(QWidget):
         self.console_toggle_button.setChecked(bool(visible))
         self.console_toggle_button.blockSignals(False)
         self.console_toggle_button.setToolTip("Hide console output" if visible else "Show console output")
+
+    def set_translation_mode(self, mode: str):
+        """Update the translation mode display."""
+        mode_text = "Online" if mode == "online" else "Offline"
+        self.translation_mode_label.setText(f"Translation: {mode_text}")

@@ -46,6 +46,7 @@ from immersion_app.core.language_config import (
     get_argos_language_code,
     get_google_language_code,
     get_language_label,
+    get_marian_language_code,
     get_whisper_language_code,
     list_language_codes,
     normalize_language_code,
@@ -64,7 +65,7 @@ from immersion_app.gui.widgets.pdf_status_bar import PDFStatusBar
 from immersion_app.gui.widgets.transport_bar import TransportBar
 from immersion_app.gui.theme import Theme
 from immersion_app.integrations.subtitle_generation import generate_srt_from_video
-from immersion_app.integrations.translation_backends import OfflineTranslationBackend, OnlineTranslationBackend
+from immersion_app.integrations.translation_backends import MarianMTTranslationBackend, OnlineTranslationBackend
 from immersion_app.media.subtitle_matching import find_best_srt_for_video
 from immersion_app.media.subtitle_parser import SRTParser
 
@@ -96,6 +97,42 @@ class TranslateTask(QRunnable):
         except Exception as exc:
             try:
                 self.signals.failed.emit(self.request_id, str(exc))
+            except RuntimeError:
+                return
+
+
+class BatchTranslateSignals(QObject):
+    finished = Signal(list, list)  # (texts, translations)
+    failed = Signal(str)  # error message
+
+
+class BatchTranslateTask(QRunnable):
+    """Task for translating multiple texts in a single batch request."""
+
+    def __init__(self, texts, src_lang, dest_lang, backend):
+        super().__init__()
+        self.texts = texts
+        self.src_lang = src_lang
+        self.dest_lang = dest_lang
+        self.backend = backend
+        self.signals = BatchTranslateSignals()
+
+    def run(self):
+        try:
+            # Use batch translation if backend supports it
+            if hasattr(self.backend, 'translate_batch'):
+                translations = self.backend.translate_batch(self.texts, self.src_lang, self.dest_lang)
+            else:
+                # Fallback: translate one by one
+                translations = [self.backend.translate(text, self.src_lang, self.dest_lang) for text in self.texts]
+
+            try:
+                self.signals.finished.emit(self.texts, translations)
+            except RuntimeError:
+                return
+        except Exception as exc:
+            try:
+                self.signals.failed.emit(str(exc))
             except RuntimeError:
                 return
 
@@ -291,11 +328,43 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._translation_requests = {}
         self._translation_requests_by_key = {}
         self._translation_context_version = 0
+        self._online_backend = None
+        self._offline_backend = None
+        self._cache_hits = 0
+        self._cache_misses = 0
         self.console_capture = console_capture
         self.user_data = load_user_data()
         self.analytics_vocabulary = set(self.user_data.get("analytics", {}).get("vocabulary_seen", []))
         self.analytics_vocabulary.update(load_snapshot())
         print(f"[main] __init__: analytics_vocabulary seeded with {len(self.analytics_vocabulary)} words at startup")
+
+        # Print startup configuration
+        print("=" * 60)
+        print("LinguaLoop Workspace - Startup Configuration")
+        print("=" * 60)
+        print(f"Learning Language: {self.user_data['preferences']['learning_language']}")
+        print(f"Native Language: {self.user_data['preferences']['native_language']}")
+        print(f"Translation Mode: {self.user_data['preferences']['translation_mode']}")
+        print(f"Video Playback Speed: {self.user_data['preferences']['video_playback_speed']}x")
+        print(f"Recent Files: {len(self.user_data['recent_files'])} file(s)")
+        print(f"Total Cards Added: {self.user_data['analytics']['cards_added_total']}")
+        print(f"Vocabulary Seen: {len(self.user_data['analytics'].get('vocabulary_seen', []))} words")
+        print("-" * 60)
+        last_session = self.user_data['last_session']
+        if last_session.get('content_type'):
+            print(f"Last Session Type: {last_session['content_type']}")
+            if last_session.get('pdf_path'):
+                print(f"  PDF: {last_session['pdf_path']}")
+                print(f"  Page: {last_session.get('page_index', 0) + 1}")
+            if last_session.get('video_path'):
+                print(f"  Video: {last_session['video_path']}")
+                print(f"  Position: {last_session.get('video_position_ms', 0) / 1000:.1f}s")
+                if last_session.get('srt_path'):
+                    print(f"  Subtitles: {last_session['srt_path']}")
+                    print(f"  Subtitle Offset: {last_session.get('subtitle_offset_ms', 0)}ms")
+        else:
+            print("Last Session: None (starting fresh)")
+        print("=" * 60)
 
         # Mode management
         self.mode_manager = ModeManager()
@@ -305,7 +374,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.current_source_name = ""
         self.current_source_location = ""
         self.is_anki_connected = False
-        self.translation_mode = self.user_data["preferences"].get("translation_mode", "online")
+        self.translation_mode = self.user_data["preferences"].get("translation_mode", "offline")
         self.learning_language = self.user_data["preferences"].get("learning_language", DEFAULT_LEARNING_LANGUAGE)
         self.native_language = self.user_data["preferences"].get("native_language", DEFAULT_NATIVE_LANGUAGE)
         self.sentence_counts = {}
@@ -702,9 +771,6 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             menu.addAction("Generate subtitles", self._generate_subtitles_interactive)
 
         menu.addSeparator()
-        menu.addAction(self._sc_pdf_mode)
-        menu.addAction(self._sc_video_mode)
-        menu.addSeparator()
         menu.addAction(self._sc_open)
 
         # Only show load subtitles in video mode
@@ -1057,10 +1123,19 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             return False
 
     def _determine_translation_mode(self):
-        if self._check_internet_connection() and OnlineTranslationBackend().is_available():
-            if self.translation_mode != "offline":
-                self.translation_mode = "online"
-        elif OfflineTranslationBackend().is_available():
+        # Check availability without creating new instances unnecessarily
+        if self._check_internet_connection():
+            # Use cached online backend if available, otherwise create temporary one for check
+            online_backend = self._online_backend if self._online_backend is not None else OnlineTranslationBackend()
+            if online_backend.is_available():
+                if self.translation_mode != "offline":
+                    self.translation_mode = "online"
+                self._update_translation_status_label()
+                return
+
+        # Fall back to offline mode if available
+        offline_backend = self._offline_backend if self._offline_backend is not None else MarianMTTranslationBackend()
+        if offline_backend.is_available():
             self.translation_mode = "offline"
         self._update_translation_status_label()
 
@@ -1071,17 +1146,26 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         else:
             self.translation_status_label.setText("Translation: Online")
             self.mode_indicator_label.setText("Translation mode: ONLINE")
+
+        # Update PDF status bar if it exists
+        if hasattr(self, "pdf_status_bar"):
+            self.pdf_status_bar.set_translation_mode(self.translation_mode)
+
         self.user_data["preferences"]["translation_mode"] = self.translation_mode
         save_user_data(self.user_data)
 
     def _toggle_translation_mode(self):
         if self.translation_mode == "online":
-            if not OfflineTranslationBackend().is_available():
+            # Check offline availability
+            offline_backend = self._offline_backend if self._offline_backend is not None else MarianMTTranslationBackend()
+            if not offline_backend.is_available():
                 self._set_status("Offline translation backend is not installed.")
                 return
             self.translation_mode = "offline"
         else:
-            if not OnlineTranslationBackend().is_available():
+            # Check online availability
+            online_backend = self._online_backend if self._online_backend is not None else OnlineTranslationBackend()
+            if not online_backend.is_available():
                 self._set_status("Online translation backend is not installed.")
                 return
             self.translation_mode = "online"
@@ -1090,8 +1174,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
     def _get_translation_language_codes(self):
         if self.translation_mode == "offline":
             return (
-                get_argos_language_code(self.learning_language),
-                get_argos_language_code(self.native_language),
+                get_marian_language_code(self.learning_language),
+                get_marian_language_code(self.native_language),
             )
         return (
             get_google_language_code(self.learning_language),
@@ -1115,9 +1199,28 @@ class UnifiedSentenceMinerWindow(QMainWindow):
     def _reset_translation_cache(self):
         self.translation_cache.clear()
         self._translation_context_version += 1
+        # Reset backend instances when cache is reset (language change)
+        self._online_backend = None
+
+        # Clear MarianMT model cache when language changes
+        if self._offline_backend is not None:
+            if hasattr(self._offline_backend, 'clear_model_cache'):
+                self._offline_backend.clear_model_cache()
+        self._offline_backend = None
 
     def _translation_cache_key(self, text):
         return (self.learning_language, self.native_language, text)
+
+    def _get_translation_backend(self):
+        """Get or create the appropriate translation backend, reusing instances."""
+        if self.translation_mode == "online":
+            if self._online_backend is None:
+                self._online_backend = OnlineTranslationBackend()
+            return self._online_backend
+        else:
+            if self._offline_backend is None:
+                self._offline_backend = MarianMTTranslationBackend()
+            return self._offline_backend
 
     def _start_translation_request(self, text, *, visible):
         if not text:
@@ -1125,6 +1228,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         key = self._translation_cache_key(text)
         if key in self.translation_cache:
             if visible:
+                self._cache_hits += 1
+                print(f"[translation] CACHE HIT: '{text[:30]}...' (hits: {self._cache_hits}, misses: {self._cache_misses})")
                 self.selection.translation = self.translation_cache[key]
                 self._update_selection_panel()
                 self._update_action_buttons()
@@ -1145,11 +1250,13 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._next_translation_request_id += 1
         request_id = self._next_translation_request_id
         if visible:
+            self._cache_misses += 1
+            print(f"[translation] CACHE MISS: '{text[:30]}...' (hits: {self._cache_hits}, misses: {self._cache_misses})")
             self.current_request_id = request_id
             self.selection.translation = "translating..."
             self._update_selection_panel()
             self._update_action_buttons()
-        backend = OnlineTranslationBackend() if self.translation_mode == "online" else OfflineTranslationBackend()
+        backend = self._get_translation_backend()
         src_lang, dest_lang = self._get_translation_language_codes()
         task = TranslateTask(request_id, text, src_lang, dest_lang, backend)
         self._translation_requests[request_id] = {
@@ -1167,8 +1274,52 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._start_translation_request(text, visible=True)
 
     def _prefetch_translations(self, texts):
+        """
+        Prefetch translations for multiple texts efficiently.
+        Uses batch translation for online mode to minimize API calls.
+        """
+        if not texts:
+            return
+
+        # Filter out texts that are already cached or being requested
+        texts_to_fetch = []
         for text in texts:
-            self._start_translation_request(text, visible=False)
+            if not text:
+                continue
+            key = self._translation_cache_key(text)
+            # Skip if already cached or already being requested
+            if key not in self.translation_cache and key not in self._translation_requests_by_key:
+                texts_to_fetch.append(text)
+
+        if not texts_to_fetch:
+            return
+
+        # For online mode, use batch translation for efficiency
+        if self.translation_mode == "online":
+            self._prefetch_translations_batch(texts_to_fetch)
+        else:
+            # For offline mode, process individually (batch not implemented yet)
+            for text in texts_to_fetch:
+                self._start_translation_request(text, visible=False)
+
+    def _prefetch_translations_batch(self, texts):
+        """
+        Prefetch translations using batch API calls.
+        Processes texts in batches of 50 to avoid overwhelming the API.
+        """
+        BATCH_SIZE = 50
+
+        # Process in batches
+        for i in range(0, len(texts), BATCH_SIZE):
+            batch = texts[i:i + BATCH_SIZE]
+            backend = self._get_translation_backend()
+            src_lang, dest_lang = self._get_translation_language_codes()
+
+            # Create a batch translation task
+            task = BatchTranslateTask(batch, src_lang, dest_lang, backend)
+            task.signals.finished.connect(self._on_batch_translation_done)
+            task.signals.failed.connect(self._on_batch_translation_failed)
+            self.thread_pool.start(task)
 
     def _iter_unique_clean_words(self, values):
         seen = set()
@@ -1214,6 +1365,23 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._update_selection_panel()
         self._update_action_buttons()
         self._set_status(f"Translation failed: {error_message}")
+
+    def _on_batch_translation_done(self, texts, translations):
+        """Handle completion of batch translation for prefetching."""
+        if len(texts) != len(translations):
+            print(f"[translation] Batch translation error: text count ({len(texts)}) != translation count ({len(translations)})")
+            return
+
+        # Cache all the translations
+        for text, translation in zip(texts, translations):
+            key = self._translation_cache_key(text)
+            self.translation_cache[key] = translation
+
+        print(f"[translation] Batch prefetch completed: {len(texts)} words cached")
+
+    def _on_batch_translation_failed(self, error_message):
+        """Handle batch translation failure - log but don't show to user since it's background."""
+        print(f"[translation] Batch prefetch failed: {error_message}")
 
     def _translate_word_field_input(self):
         text = self.word_value.text().strip()

@@ -5,12 +5,12 @@ from __future__ import annotations
 
 
 SUPPORTED_LANGUAGES = {
-    "es": {"label": "Spanish", "google": "es", "argos": "es", "whisper": "es"},
-    "ja": {"label": "Japanese", "google": "ja", "argos": "ja", "whisper": "ja"},
-    "zh": {"label": "Chinese", "google": "zh-cn", "argos": "zh", "whisper": "zh"},
-    "it": {"label": "Italian", "google": "it", "argos": "it", "whisper": "it"},
-    "fr": {"label": "French", "google": "fr", "argos": "fr", "whisper": "fr"},
-    "en": {"label": "English", "google": "en", "argos": "en", "whisper": "en"},
+    "es": {"label": "Spanish", "google": "es", "argos": "es", "marian": "es", "whisper": "es"},
+    "ja": {"label": "Japanese", "google": "ja", "argos": "ja", "marian": "jap", "whisper": "ja"},
+    "zh": {"label": "Chinese", "google": "zh-cn", "argos": "zh", "marian": "zh", "whisper": "zh"},
+    "it": {"label": "Italian", "google": "it", "argos": "it", "marian": "it", "whisper": "it"},
+    "fr": {"label": "French", "google": "fr", "argos": "fr", "marian": "fr", "whisper": "fr"},
+    "en": {"label": "English", "google": "en", "argos": "en", "marian": "en", "whisper": "en"},
 }
 
 DEFAULT_LEARNING_LANGUAGE = "es"
@@ -40,3 +40,8 @@ def get_argos_language_code(code: str) -> str:
 
 def get_whisper_language_code(code: str) -> str:
     return SUPPORTED_LANGUAGES[code]["whisper"]
+
+
+def get_marian_language_code(code: str) -> str:
+    """Get MarianMT language code for app language code."""
+    return SUPPORTED_LANGUAGES[code]["marian"]
