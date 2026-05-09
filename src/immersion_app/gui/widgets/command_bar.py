@@ -85,7 +85,7 @@ class StatsChip(QLabel):
 
     def update_stats(self, today_count: int, total_count: int):
         """Update the stats display."""
-        self.setText(f"âœ¨ {today_count} today Â· {total_count} total")
+        self.setText(f"✨ {today_count} today · {total_count} total")
 
 
 class CommandBar(QWidget):
@@ -136,7 +136,7 @@ class CommandBar(QWidget):
         layout.addWidget(self.title_widget)
 
         # Close button (hidden until a file is loaded)
-        self.close_button = QPushButton("Ã—")
+        self.close_button = QPushButton("×")
         self.close_button.setFixedSize(24, 24)
         self.close_button.setStyleSheet(Theme.get_button_style("ghost"))
         self.close_button.setVisible(False)
@@ -191,7 +191,7 @@ class CommandBar(QWidget):
         layout.addWidget(self.stats_chip)
 
         # Settings button
-        self.settings_button = QPushButton("âš™")
+        self.settings_button = QPushButton("⚙")
         self.settings_button.setFixedSize(32, 32)
         self.settings_button.setStyleSheet(Theme.get_button_style("ghost"))
         self.settings_button.clicked.connect(self.settings_requested.emit)
