@@ -1,10 +1,10 @@
 """
 Command bar widget for the top of the application.
 
-Provides mode switching, document title, stats, and settings access.
+Provides recent files access, document title, stats, and settings access.
 """
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QWidget,
@@ -13,77 +13,10 @@ from PySide6.QtWidgets import (
     QPushButton,
     QLabel,
     QLineEdit,
-    QButtonGroup,
     QSizePolicy,
 )
 
 from immersion_app.gui.theme import Theme
-
-
-class ModePillGroup(QWidget):
-    """Exclusive mode selector pills (PDF/Video)."""
-
-    mode_changed = Signal(str)  # "pdf" or "video"
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-
-        # Create mode buttons
-        self.pdf_button = QPushButton("PDF")
-        self.video_button = QPushButton("Video")
-
-        # Make them exclusive
-        self.button_group = QButtonGroup(self)
-        self.button_group.addButton(self.pdf_button)
-        self.button_group.addButton(self.video_button)
-        self.pdf_button.setCheckable(True)
-        self.video_button.setCheckable(True)
-        self.pdf_button.setChecked(True)
-
-        # Connect signals
-        self.pdf_button.clicked.connect(lambda: self.mode_changed.emit("pdf"))
-        self.video_button.clicked.connect(lambda: self.mode_changed.emit("video"))
-
-        # Apply styling
-        self._apply_style()
-
-        layout.addWidget(self.pdf_button)
-        layout.addWidget(self.video_button)
-
-    def _apply_style(self):
-        """Apply modern pill button styling."""
-        style = f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {Theme.TEXT_SOFT};
-                border: none;
-                border-radius: 6px;
-                padding: 6px 14px;
-                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: 12.5px;
-                font-weight: {Theme.FONT_WEIGHT_MEDIUM};
-            }}
-            QPushButton:hover {{
-                background-color: {Theme.SURFACE_ALT};
-            }}
-            QPushButton:checked {{
-                background-color: {Theme.ACCENT};
-                color: white;
-            }}
-        """
-        self.pdf_button.setStyleSheet(style)
-        self.video_button.setStyleSheet(style)
-
-    def set_active_mode(self, mode: str):
-        """Set the active mode programmatically."""
-        if mode == "pdf":
-            self.pdf_button.setChecked(True)
-        elif mode == "video":
-            self.video_button.setChecked(True)
 
 
 class TitleWidget(QWidget):
@@ -157,20 +90,21 @@ class StatsChip(QLabel):
 
 class CommandBar(QWidget):
     """
-    Top command bar with mode switcher, title, stats, and settings.
+    Top command bar with recent files, title, stats, and settings.
     """
 
-    mode_changed = Signal(str)  # "pdf" or "video"
     open_requested = Signal()
     close_requested = Signal()
     settings_requested = Signal()
     previous_page_requested = Signal()
     next_page_requested = Signal()
     page_jump_requested = Signal(int)  # 1-based page number
+    recent_file_selected = Signal(str, str)  # (file_path, file_type)
 
-    def __init__(self, parent=None):
+    def __init__(self, user_data: dict, parent=None):
         super().__init__(parent)
 
+        self.user_data = user_data
         self._total_pages = 0
         self.setFixedHeight(Theme.COMMAND_BAR_HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -181,13 +115,12 @@ class CommandBar(QWidget):
         layout.setSpacing(16)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        # Left: Mode pills
-        self.mode_pills = ModePillGroup()
-        self.mode_pills.mode_changed.connect(self.mode_changed.emit)
-        layout.addWidget(self.mode_pills)
-
-        # Separator
-        layout.addSpacing(8)
+        # Left: Recent files button
+        self.recent_button = QPushButton("Recent")
+        self.recent_button.setStyleSheet(Theme.get_button_style("secondary"))
+        self.recent_button.setFixedHeight(32)
+        self.recent_button.clicked.connect(self._show_recent_files_menu)
+        layout.addWidget(self.recent_button)
 
         # Open button (always visible)
         self.open_button = QPushButton("Open...")
@@ -276,10 +209,6 @@ class CommandBar(QWidget):
         """Update the stats chip."""
         self.stats_chip.update_stats(today_count, total_count)
 
-    def set_mode(self, mode: str):
-        """Set the active mode."""
-        self.mode_pills.set_active_mode(mode)
-
     def set_file_loaded(self, loaded: bool):
         """Show or hide the close button based on whether a file is loaded."""
         self.close_button.setVisible(loaded)
@@ -307,3 +236,22 @@ class CommandBar(QWidget):
         self.page_current_input.setText(str(page))
         self.page_current_input.clearFocus()
         self.page_jump_requested.emit(page)
+
+    def _show_recent_files_menu(self):
+        """Show recent files dropdown menu."""
+        from .recent_files_menu import RecentFilesMenu
+
+        menu = RecentFilesMenu(self.user_data, parent=self)
+        menu.file_selected.connect(self.recent_file_selected.emit)
+        menu.browse_requested.connect(self._trigger_open_dialog)
+
+        # Position menu below the Recent button
+        button_geometry = self.recent_button.geometry()
+        menu_pos = self.recent_button.mapToGlobal(
+            QPoint(0, button_geometry.height())
+        )
+        menu.exec(menu_pos)
+
+    def _trigger_open_dialog(self):
+        """Emit signal to trigger file browser dialog."""
+        self.open_requested.emit()

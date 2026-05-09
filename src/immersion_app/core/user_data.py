@@ -34,6 +34,7 @@ def default_user_data():
             "cards_added_total": 0,
             "vocabulary_seen": [],
         },
+        "recent_files": [],
     }
 
 
@@ -65,6 +66,7 @@ def load_user_data():
     payload["analytics"] = payload.get("analytics") or {"cards_added_total": 0, "vocabulary_seen": []}
     payload["last_session"] = payload.get("last_session") or default_user_data()["last_session"]
     payload["workspace"] = payload.get("workspace") or {"current_view": "welcome"}
+    payload["recent_files"] = payload.get("recent_files") or []
     return payload
 
 

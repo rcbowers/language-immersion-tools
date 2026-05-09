@@ -349,14 +349,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._main_layout = main_layout
 
         # Command bar at top
-        self.command_bar = CommandBar()
-        self.command_bar.mode_changed.connect(self._on_command_bar_mode_request)
+        self.command_bar = CommandBar(self.user_data)
         self.command_bar.open_requested.connect(self._open_content_dialog)
         self.command_bar.close_requested.connect(self._close_current_file)
         self.command_bar.settings_requested.connect(self._show_settings_dialog)
         self.command_bar.previous_page_requested.connect(self._prev_page)
         self.command_bar.next_page_requested.connect(self._next_page)
         self.command_bar.page_jump_requested.connect(self._jump_to_page)
+        self.command_bar.recent_file_selected.connect(self._on_recent_file_selected)
         self.command_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         main_layout.addWidget(self.command_bar, stretch=0)
 
@@ -418,19 +418,6 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _setup_keyboard_shortcuts(self):
         """Setup mode-aware keyboard shortcuts."""
-        # GLOBAL: Mode switching
-        self._sc_pdf_mode = QAction("PDF Mode", self)
-        self._sc_pdf_mode.setShortcut(QKeySequence("Ctrl+1"))
-        self._sc_pdf_mode.triggered.connect(lambda: self.mode_manager.set_mode(WorkspaceMode.PDF))
-        self.addAction(self._sc_pdf_mode)
-        self.shortcut_manager.add_shortcut('global', self._sc_pdf_mode)
-
-        self._sc_video_mode = QAction("Video Mode", self)
-        self._sc_video_mode.setShortcut(QKeySequence("Ctrl+2"))
-        self._sc_video_mode.triggered.connect(lambda: self.mode_manager.set_mode(WorkspaceMode.VIDEO))
-        self.addAction(self._sc_video_mode)
-        self.shortcut_manager.add_shortcut('global', self._sc_video_mode)
-
         # GLOBAL: File operations
         self._sc_open = QAction("Open source", self)
         self._sc_open.setShortcut(QKeySequence("Ctrl+O"))
@@ -590,12 +577,53 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             trim_cursor.removeSelectedText()
             trim_cursor.deleteChar()
 
-    def _on_command_bar_mode_request(self, mode_str: str):
-        """Handle mode change request from command bar."""
-        if mode_str == "pdf":
-            self.mode_manager.set_mode(WorkspaceMode.PDF)
-        elif mode_str == "video":
-            self.mode_manager.set_mode(WorkspaceMode.VIDEO)
+    def _on_recent_file_selected(self, file_path: str, file_type: str):
+        """
+        Handle selection of a recent file.
+
+        Args:
+            file_path: Absolute path to the file
+            file_type: "pdf" or "video"
+        """
+        path = Path(file_path)
+
+        # Validate file exists
+        if not path.exists():
+            QMessageBox.critical(
+                self,
+                "File Not Found",
+                f"The file no longer exists:\n{file_path}\n\nIt may have been moved or deleted."
+            )
+            # Remove from recent files
+            from immersion_app.core.recent_files import remove_recent_file
+            remove_recent_file(self.user_data, file_path)
+            save_user_data(self.user_data)
+
+            # Refresh recent files display
+            if hasattr(self, 'welcome_recent_files_list'):
+                self.welcome_recent_files_list.refresh()
+            return
+
+        # Get the stored position from recent files
+        from immersion_app.core.recent_files import get_recent_files
+        recent_files = get_recent_files(self.user_data, validate_exists=False)
+
+        # Find the matching file entry to get its position
+        file_entry = None
+        normalized_path = os.path.normcase(os.path.abspath(file_path))
+        for entry in recent_files:
+            entry_path = os.path.normcase(os.path.abspath(entry.get("path", "")))
+            if entry_path == normalized_path:
+                file_entry = entry
+                break
+
+        # Load the file with stored position (auto-switches mode)
+        if file_type == "pdf":
+            page_index = file_entry.get("page_index", 0) if file_entry else 0
+            self._load_pdf(str(path), initial_page_index=page_index)
+        else:
+            position_ms = file_entry.get("video_position_ms", 0) if file_entry else 0
+            self._load_video(str(path), restore_position_ms=position_ms)
 
     def _on_mode_changed_internal(self, mode: WorkspaceMode):
         """
@@ -611,9 +639,6 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         elif mode == WorkspaceMode.VIDEO:
             self.workspace_stack.setCurrentWidget(self.video_page)
             self.command_bar.set_page_info(0, 0)
-
-        # Synchronize command bar pills
-        self.command_bar.set_mode(self._mode_to_string(mode))
 
         # Update keyboard shortcuts
         self.shortcut_manager.update_for_mode(mode)
@@ -740,6 +765,37 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         """)
         layout.addWidget(subtitle)
 
+        # Recent files section
+        from immersion_app.gui.widgets.welcome_recent_files import WelcomeRecentFilesList
+        recent_container = QWidget()
+        recent_layout = QVBoxLayout(recent_container)
+        recent_layout.setContentsMargins(0, 0, 0, 0)
+        recent_layout.setSpacing(8)
+
+        # Section heading
+        recent_heading = QLabel("Recent")
+        recent_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        recent_heading.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_MUTED};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 11px;
+                font-weight: {Theme.FONT_WEIGHT_MEDIUM};
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 8px;
+            }}
+        """)
+        recent_layout.addWidget(recent_heading)
+
+        # Recent files list widget
+        self.welcome_recent_files_list = WelcomeRecentFilesList(self.user_data)
+        self.welcome_recent_files_list.file_selected.connect(self._on_recent_file_selected)
+        recent_layout.addWidget(self.welcome_recent_files_list)
+
+        layout.addWidget(recent_container)
+        layout.addSpacing(24)
+
         # Buttons
         button_row = QHBoxLayout()
         button_row.setSpacing(12)
@@ -765,7 +821,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         layout.addStretch(1)
 
         # Keyboard shortcuts hint
-        shortcuts = QLabel("Ctrl+O to open · Ctrl+1/2 to switch modes")
+        shortcuts = QLabel("Ctrl+O to open")
         shortcuts.setAlignment(Qt.AlignmentFlag.AlignCenter)
         shortcuts.setStyleSheet(f"""
             QLabel {{
@@ -1560,6 +1616,16 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.mode_manager.set_pdf_loaded(True)
         self.mode_manager.set_mode(WorkspaceMode.PDF, force=True)
 
+        # Add to recent files
+        from immersion_app.core.recent_files import add_recent_file
+        add_recent_file(
+            self.user_data,
+            str(self.current_pdf_path),
+            "pdf",
+            {"page_index": self.current_page_index}
+        )
+        save_user_data(self.user_data)
+
     def _render_current_page(self):
         if not self.doc:
             return
@@ -1813,6 +1879,17 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.mode_manager.set_video_loaded(True)
         self.mode_manager.set_mode(WorkspaceMode.VIDEO, force=True)
 
+        # Add to recent files
+        from immersion_app.core.recent_files import add_recent_file
+        position_ms = self.media_player.position() if self.media_player else 0
+        add_recent_file(
+            self.user_data,
+            str(self.current_video_path),
+            "video",
+            {"video_position_ms": position_ms}
+        )
+        save_user_data(self.user_data)
+
     def _load_subtitles(self, srt_path):
         try:
             self.subtitle_parser = SRTParser.from_file(srt_path)
@@ -2046,6 +2123,24 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             self.user_data["workspace"]["current_view"] = "pdf"
         else:
             self.user_data["workspace"]["current_view"] = "welcome"
+
+        # Update recent files with latest position
+        from immersion_app.core.recent_files import add_recent_file
+        if mode == WorkspaceMode.PDF and self.current_pdf_path:
+            add_recent_file(
+                self.user_data,
+                str(self.current_pdf_path),
+                "pdf",
+                {"page_index": self.current_page_index}
+            )
+        elif mode == WorkspaceMode.VIDEO and self.current_video_path:
+            add_recent_file(
+                self.user_data,
+                str(self.current_video_path),
+                "video",
+                {"video_position_ms": self.media_player.position() if self.media_player else 0}
+            )
+
         save_user_data(self.user_data)
 
     def _restore_last_session(self):
