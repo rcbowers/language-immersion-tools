@@ -1,7 +1,7 @@
 """Recent files dropdown menu widget."""
 
-from PySide6.QtWidgets import QMenu, QWidgetAction, QWidget, QVBoxLayout, QLabel, QFileDialog
-from PySide6.QtCore import Signal, Qt, QPoint
+from PySide6.QtWidgets import QMenu, QWidgetAction, QWidget, QVBoxLayout, QLabel
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QCursor
 
 from ...core.recent_files import get_recent_files, format_time_ago, format_position_metadata
@@ -29,19 +29,11 @@ class RecentFileMenuItem(QWidget):
         icon = "📄" if self.file_type == "pdf" else "🎬"
         filename = self.file_data.get("name", "Unknown")
 
-        filename_label = QLabel(f"{icon} {filename}")
-        filename_label.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.TEXT};
-                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: 14px;
-                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
-            }}
-        """)
-        filename_label.setWordWrap(False)
+        self.filename_label = QLabel(f"{icon} {filename}")
+        self.filename_label.setWordWrap(False)
         # Enable text elision
-        filename_label.setTextFormat(Qt.PlainText)
-        filename_label.setMaximumWidth(350)
+        self.filename_label.setTextFormat(Qt.PlainText)
+        self.filename_label.setMaximumWidth(350)
 
         # Metadata row (position + time)
         page_index = self.file_data.get("page_index", 0)
@@ -53,31 +45,16 @@ class RecentFileMenuItem(QWidget):
 
         metadata_text = f"{position_text} · {time_text}"
 
-        metadata_label = QLabel(metadata_text)
-        metadata_label.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.TEXT_MUTED};
-                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: 11px;
-            }}
-        """)
+        self.metadata_label = QLabel(metadata_text)
 
-        layout.addWidget(filename_label)
-        layout.addWidget(metadata_label)
+        layout.addWidget(self.filename_label)
+        layout.addWidget(self.metadata_label)
 
         self.setFixedHeight(56)
         self.setCursor(QCursor(Qt.PointingHandCursor))
 
         # Set base style
-        self.setStyleSheet(f"""
-            RecentFileMenuItem {{
-                background-color: transparent;
-                border-radius: 4px;
-            }}
-            RecentFileMenuItem:hover {{
-                background-color: {Theme.SURFACE_ALT};
-            }}
-        """)
+        self.refresh_theme()
 
     def mousePressEvent(self, event):
         """Handle mouse press."""
@@ -87,6 +64,32 @@ class RecentFileMenuItem(QWidget):
             menu = self.window()
             if isinstance(menu, QMenu):
                 menu.close()
+
+    def refresh_theme(self):
+        self.filename_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 14px;
+                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
+            }}
+        """)
+        self.metadata_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_MUTED};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 11px;
+            }}
+        """)
+        self.setStyleSheet(f"""
+            RecentFileMenuItem {{
+                background-color: transparent;
+                border-radius: 4px;
+            }}
+            RecentFileMenuItem:hover {{
+                background-color: {Theme.SURFACE_ALT};
+            }}
+        """)
 
 
 class RecentFilesMenu(QMenu):
@@ -127,31 +130,14 @@ class RecentFilesMenu(QMenu):
         browse_action.triggered.connect(self.browse_requested.emit)
 
         # Style the menu
-        self.setStyleSheet(f"""
-            QMenu {{
-                background-color: {Theme.SURFACE};
-                border: 1px solid {Theme.BORDER};
-                border-radius: 8px;
-                padding: 4px;
-            }}
-            QMenu::item {{
-                background-color: transparent;
-                color: {Theme.TEXT};
-                padding: 8px 12px;
-                border-radius: 4px;
-            }}
-            QMenu::item:selected {{
-                background-color: {Theme.SURFACE_ALT};
-            }}
-            QMenu::item:disabled {{
-                color: {Theme.TEXT_MUTED};
-            }}
-            QMenu::separator {{
-                height: 1px;
-                background-color: {Theme.BORDER};
-                margin: 4px 0px;
-            }}
-        """)
+        self.refresh_theme()
 
         # Set minimum width
         self.setMinimumWidth(300)
+
+    def refresh_theme(self):
+        self.setStyleSheet(Theme.get_menu_style())
+        for action in self.actions():
+            widget = action.defaultWidget() if isinstance(action, QWidgetAction) else None
+            if widget and hasattr(widget, "refresh_theme"):
+                widget.refresh_theme()

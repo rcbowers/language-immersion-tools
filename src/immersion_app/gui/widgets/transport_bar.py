@@ -42,12 +42,6 @@ class TransportBar(QWidget):
 
     def _build_ui(self):
         """Build the transport bar UI."""
-        self.setStyleSheet(f"""
-            QWidget {{
-                background-color: rgba(0, 0, 0, 0.9);
-            }}
-        """)
-
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 0, 12, 0)
         layout.setSpacing(12)
@@ -225,6 +219,7 @@ class TransportBar(QWidget):
             }}
         """)
         layout.addWidget(self.volume_slider)
+        self.refresh_theme()
 
     def _on_speed_changed(self, text):
         """Parse speed text and emit signal."""
@@ -258,6 +253,141 @@ class TransportBar(QWidget):
         """Set volume (0.0 to 1.0)."""
         self.volume_slider.blockSignals(True)
         self.volume_slider.setValue(int(volume * 100))
+        self.volume_slider.blockSignals(False)
+
+    def refresh_theme(self):
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: rgba(0, 0, 0, 0.9);
+            }}
+        """)
+        self.play_pause_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Theme.ACCENT};
+                color: white;
+                border: none;
+                border-radius: 16px;
+                font-size: 14px;
+                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
+            }}
+            QPushButton:hover {{
+                background-color: #4a5ce6;
+            }}
+            QPushButton:pressed {{
+                background-color: #3d4ed9;
+            }}
+        """)
+        self.replay_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-size: 16px;
+            }}
+            QPushButton:hover {{
+                background-color: rgba(255, 255, 255, 0.1);
+            }}
+            QPushButton:pressed {{
+                background-color: rgba(255, 255, 255, 0.2);
+            }}
+        """)
+        self.time_label.setStyleSheet(f"""
+            QLabel {{
+                color: white;
+                font-family: {Theme.FONT_MONO};
+                font-size: 11px;
+                font-weight: {Theme.FONT_WEIGHT_MEDIUM};
+            }}
+        """)
+        self.position_slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                background: rgba(255, 255, 255, 0.2);
+                height: 4px;
+                border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                background: {Theme.ACCENT};
+                width: 12px;
+                height: 12px;
+                margin: -4px 0;
+                border-radius: 6px;
+            }}
+            QSlider::handle:horizontal:hover {{
+                background: #4a5ce6;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {Theme.ACCENT};
+                border-radius: 2px;
+            }}
+        """)
+        self.speed_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: rgba(255, 255, 255, 0.1);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 11px;
+                font-weight: {Theme.FONT_WEIGHT_MEDIUM};
+            }}
+            QComboBox:hover {{
+                background-color: rgba(255, 255, 255, 0.15);
+            }}
+            QComboBox::drop-down {{
+                border: none;
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                border-left: 3px solid transparent;
+                border-right: 3px solid transparent;
+                border-top: 4px solid white;
+                margin-right: 5px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #2a2a2a;
+                color: white;
+                selection-background-color: {Theme.ACCENT};
+                border: 1px solid rgba(255, 255, 255, 0.2);
+            }}
+        """)
+        self.cc_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: rgba(255, 255, 255, 0.1);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 4px;
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 10px;
+                font-weight: {Theme.FONT_WEIGHT_BOLD};
+            }}
+            QPushButton:checked {{
+                background-color: {Theme.ACCENT};
+                border-color: {Theme.ACCENT};
+            }}
+            QPushButton:hover {{
+                background-color: rgba(255, 255, 255, 0.2);
+            }}
+        """)
+        self.volume_slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                background: rgba(255, 255, 255, 0.2);
+                height: 3px;
+                border-radius: 1px;
+            }}
+            QSlider::handle:horizontal {{
+                background: white;
+                width: 10px;
+                height: 10px;
+                margin: -4px 0;
+                border-radius: 5px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: white;
+                border-radius: 1px;
+            }}
+        """)
         self.volume_slider.blockSignals(False)
 
     @staticmethod

@@ -9,21 +9,6 @@ from immersion_app.gui.theme import Theme
 class CardFeedbackToast(QWidget):
     """Small overlay that shows a multi-line summary of the card action."""
 
-    _VARIANT_STYLES = {
-        "added": {
-            "border": Theme.ACCENT,
-            "title": Theme.ACCENT_DARK,
-            "badge_bg": Theme.ACCENT_SOFT,
-            "badge_fg": Theme.ACCENT_DARK,
-        },
-        "queued": {
-            "border": Theme.BORDER_STRONG,
-            "title": Theme.TEXT,
-            "badge_bg": Theme.SURFACE_ALT,
-            "badge_fg": Theme.TEXT_SOFT,
-        },
-    }
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -31,6 +16,7 @@ class CardFeedbackToast(QWidget):
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self.hide)
+        self._current_variant = "added"
         self._build_ui()
         self._apply_variant("added")
 
@@ -68,10 +54,11 @@ class CardFeedbackToast(QWidget):
         layout.addWidget(self.body_label)
 
     def _apply_variant(self, variant: str):
-        palette = self._VARIANT_STYLES.get(variant, self._VARIANT_STYLES["queued"])
+        self._current_variant = variant
+        palette = self._variant_styles().get(variant, self._variant_styles()["queued"])
         self.setStyleSheet(f"""
             CardFeedbackToast {{
-                background-color: rgba(255, 255, 255, 0.97);
+                background-color: {Theme.TOAST_BG};
                 border: 1px solid {palette['border']};
                 border-radius: 12px;
             }}
@@ -87,6 +74,36 @@ class CardFeedbackToast(QWidget):
                 padding: 4px 8px;
             }}
         """)
+
+    def refresh_theme(self):
+        self.body_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_SOFT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 12px;
+                font-weight: {Theme.FONT_WEIGHT_REGULAR};
+                line-height: 1.35;
+                background: transparent;
+            }}
+        """)
+        self._apply_variant(self._current_variant)
+
+    @staticmethod
+    def _variant_styles():
+        return {
+            "added": {
+                "border": Theme.ACCENT,
+                "title": Theme.ACCENT_DARK,
+                "badge_bg": Theme.ACCENT_SOFT,
+                "badge_fg": Theme.ACCENT_DARK,
+            },
+            "queued": {
+                "border": Theme.BORDER_STRONG,
+                "title": Theme.TEXT,
+                "badge_bg": Theme.SURFACE_ALT,
+                "badge_fg": Theme.TEXT_SOFT,
+            },
+        }
 
     def show_message(self, title: str, body: str, variant: str = "added", timeout_ms: int = 6500):
         self._apply_variant(variant)

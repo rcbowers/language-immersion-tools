@@ -23,6 +23,7 @@ def default_user_data():
             "native_language": DEFAULT_NATIVE_LANGUAGE,
             "translation_mode": "online",
             "video_playback_speed": 1.0,
+            "theme_mode": "light",
         },
         "last_session": {
             "content_type": "",
@@ -35,6 +36,7 @@ def default_user_data():
         },
         "analytics": {
             "cards_added_total": 0,
+            "cards_added_by_day": {},
             "vocabulary_seen": [],
         },
         "recent_files": [],
@@ -75,8 +77,18 @@ def load_user_data():
         ),
         "translation_mode": str(preferences.get("translation_mode") or "online"),
         "video_playback_speed": float(preferences.get("video_playback_speed") or 1.0),
+        "theme_mode": "dark" if str(preferences.get("theme_mode") or "").strip().lower() == "dark" else "light",
     }
-    payload["analytics"] = payload.get("analytics") or {"cards_added_total": 0, "vocabulary_seen": []}
+    payload["analytics"] = payload.get("analytics") or {
+        "cards_added_total": 0,
+        "cards_added_by_day": {},
+        "vocabulary_seen": [],
+    }
+    payload["analytics"]["cards_added_total"] = int(payload["analytics"].get("cards_added_total") or 0)
+    daily_counts = payload["analytics"].get("cards_added_by_day")
+    payload["analytics"]["cards_added_by_day"] = daily_counts if isinstance(daily_counts, dict) else {}
+    vocabulary_seen = payload["analytics"].get("vocabulary_seen")
+    payload["analytics"]["vocabulary_seen"] = vocabulary_seen if isinstance(vocabulary_seen, list) else []
     payload["last_session"] = payload.get("last_session") or default_user_data()["last_session"]
     payload["workspace"] = payload.get("workspace") or {"current_view": "welcome"}
     payload["recent_files"] = payload.get("recent_files") or []
@@ -85,7 +97,8 @@ def load_user_data():
     logger.info(
         f"Configuration: learning={payload['preferences']['learning_language']}, "
         f"native={payload['preferences']['native_language']}, "
-        f"translation_mode={payload['preferences']['translation_mode']}"
+        f"translation_mode={payload['preferences']['translation_mode']}, "
+        f"theme_mode={payload['preferences']['theme_mode']}"
     )
     logger.debug(
         f"Analytics: cards_added={payload['analytics']['cards_added_total']}, "

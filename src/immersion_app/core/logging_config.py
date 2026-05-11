@@ -2,7 +2,7 @@
 
 Provides dual-output logging:
 - File logs: DEBUG level, detailed format with timestamps and module info
-- UI console: INFO level, simplified format for user display
+- Terminal logs: INFO level, simplified format for interactive runs
 
 Creates timestamped log files for each session in data/logs/.
 """
@@ -13,45 +13,8 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from immersion_app.core.paths import LOG_DIR
-
-if TYPE_CHECKING:
-    from immersion_app.app import ConsoleCapture
-
-
-class ConsoleCaptureHandler(logging.Handler):
-    """Custom logging handler that writes to ConsoleCapture for UI display.
-
-    This handler allows log messages to appear in the UI console pane
-    while still being written to the log file with full detail.
-    """
-
-    def __init__(self, console_capture: ConsoleCapture, level: int = logging.INFO):
-        """Initialize handler with ConsoleCapture instance.
-
-        Args:
-            console_capture: The ConsoleCapture instance from app.py
-            level: Minimum log level to display in UI (default: INFO)
-        """
-        super().__init__(level)
-        self.console_capture = console_capture
-        # Simplified format for UI display: [LEVEL] message
-        formatter = logging.Formatter('[%(levelname)s] %(message)s')
-        self.setFormatter(formatter)
-
-    def emit(self, record: logging.LogRecord) -> None:
-        """Format log record and write to ConsoleCapture.
-
-        Args:
-            record: The log record to emit
-        """
-        try:
-            msg = self.format(record)
-            self.console_capture.write(msg + '\n')
-        except Exception:
-            self.handleError(record)
 
 
 def _suppress_noisy_loggers() -> None:
@@ -88,27 +51,21 @@ def _create_log_filename(prefix: str = "session") -> str:
     return f"{prefix}_{timestamp}.log"
 
 
-def setup_logging(
-    console_capture: ConsoleCapture,
-    level: int = logging.INFO,
-) -> Path:
-    """Configure dual-output logging system for GUI application.
+def setup_logging(level: int = logging.INFO) -> Path:
+    """Configure dual-output logging system for the GUI application.
 
     Sets up two handlers:
     1. FileHandler: Writes DEBUG-level logs to timestamped file with detailed format
-    2. ConsoleCaptureHandler: Writes INFO-level logs to UI console with simple format
+    2. StreamHandler: Writes INFO-level logs to the Python terminal with simple format
 
     Args:
-        console_capture: ConsoleCapture instance for UI output
-        level: Minimum log level for UI console (default: INFO)
+        level: Minimum log level for terminal output (default: INFO)
 
     Returns:
         Path to created log file
 
     Example:
-        >>> from immersion_app.app import ConsoleCapture
-        >>> console = ConsoleCapture()
-        >>> log_file = setup_logging(console)
+        >>> log_file = setup_logging()
         >>> import logging
         >>> logger = logging.getLogger(__name__)
         >>> logger.info("Application started")
@@ -137,8 +94,11 @@ def setup_logging(
     file_handler.setFormatter(file_formatter)
     root_logger.addHandler(file_handler)
 
-    # Create console capture handler with simplified format
-    console_handler = ConsoleCaptureHandler(console_capture, level=level)
+    # Create terminal stream handler with simplified format
+    console_handler = logging.StreamHandler(sys.stderr)
+    console_handler.setLevel(level)
+    console_formatter = logging.Formatter('[%(levelname)s] %(message)s')
+    console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)
 
     # Suppress noisy third-party loggers
@@ -147,13 +107,13 @@ def setup_logging(
     # Log initialization success
     logger = logging.getLogger(__name__)
     logger.info(f"Logging system initialized: {log_file_path}")
-    logger.debug(f"File log level: DEBUG, UI console level: {logging.getLevelName(level)}")
+    logger.debug(f"File log level: DEBUG, terminal log level: {logging.getLevelName(level)}")
 
     return log_file_path
 
 
 def setup_cli_logging(level: int = logging.INFO) -> Path:
-    """Configure logging for CLI tools (file output only, no UI console).
+    """Configure logging for CLI tools (file output plus terminal stream).
 
     Sets up FileHandler that writes to timestamped CLI log file with detailed format.
 

@@ -1,0 +1,297 @@
+import os
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication, QAbstractButton, QScrollArea, QWidget
+
+from immersion_app.core.mode import WorkspaceMode
+from immersion_app.core.appearance_manager import AppearanceMode
+from immersion_app.gui.main_window import UnifiedSentenceMinerWindow
+from immersion_app.gui.theme import Theme
+from immersion_app.gui.widgets.command_bar import CommandBar
+from immersion_app.gui.widgets.pdf_status_bar import PDFStatusBar
+
+
+class PdfWidgetTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_command_bar_uses_compact_height(self):
+        bar = CommandBar(user_data={})
+
+        self.assertEqual(bar.height(), Theme.COMMAND_BAR_HEIGHT)
+        self.assertEqual(bar.layout().contentsMargins().top(), 4)
+        self.assertEqual(bar.layout().contentsMargins().bottom(), 4)
+
+    def test_pdf_status_bar_shows_requested_instruction_text(self):
+        bar = PDFStatusBar()
+
+        self.assertEqual(bar.height(), Theme.STATUS_BAR_HEIGHT)
+        instruction_text = bar.instruction_label.text()
+        self.assertIn("Ctrl+hover to translate", instruction_text)
+        self.assertIn("Shift+click to end of a phrase", instruction_text)
+        self.assertIn("Ctrl+Space to add to Anki", instruction_text)
+
+    def test_pdf_status_bar_has_no_console_toggle(self):
+        bar = PDFStatusBar()
+
+        self.assertFalse(hasattr(bar, "console_toggle_button"))
+        self.assertFalse(hasattr(bar, "set_console_visible"))
+        self.assertFalse(hasattr(PDFStatusBar, "console_toggled"))
+        self.assertNotIn(">_", [button.text() for button in bar.findChildren(QAbstractButton)])
+
+    def test_pdf_status_bar_zoom_label_click_emits_reset(self):
+        bar = PDFStatusBar()
+        captured = []
+        bar.reset_zoom_clicked.connect(lambda: captured.append(True))
+
+        bar.zoom_label.mousePressEvent(None)
+
+        self.assertEqual(captured, [True])
+
+    def test_pdf_status_bar_disconnected_anki_click_emits_refresh(self):
+        bar = PDFStatusBar()
+        captured = []
+        bar.anki_status_clicked.connect(lambda: captured.append(True))
+        bar.set_anki_status(False, checking=False)
+
+        bar.anki_status_label.mousePressEvent(None)
+
+        self.assertEqual(captured, [True])
+
+    def test_pdf_status_bar_connected_anki_click_does_not_emit_refresh(self):
+        bar = PDFStatusBar()
+        captured = []
+        bar.anki_status_clicked.connect(lambda: captured.append(True))
+        bar.set_anki_status(True, checking=False)
+
+        bar.anki_status_label.mousePressEvent(None)
+
+        self.assertEqual(captured, [])
+
+    def test_pdf_status_bar_right_side_order_is_translation_anki_zoom(self):
+        bar = PDFStatusBar()
+
+        right_region = bar.layout().itemAt(2).widget()
+        right_layout = right_region.layout()
+
+        self.assertEqual(right_layout.itemAt(0).widget().text(), "Translation: Offline")
+        self.assertEqual(right_layout.itemAt(1).widget().text(), "Anki: Checking...")
+        self.assertEqual(right_layout.itemAt(2).widget().layout().itemAt(0).widget().text(), "200%")
+
+
+class WindowAnkiBindingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_refresh_anki_status_delegates_to_service(self):
+        class _Service:
+            def __init__(self):
+                self.calls = 0
+
+            def refresh_connection(self):
+                self.calls += 1
+
+        window = UnifiedSentenceMinerWindow.__new__(UnifiedSentenceMinerWindow)
+        window.anki_service = _Service()
+
+        UnifiedSentenceMinerWindow._refresh_anki_status(window)
+
+        self.assertEqual(window.anki_service.calls, 1)
+
+    def test_anki_connection_update_updates_pdf_status_bar(self):
+        window = UnifiedSentenceMinerWindow.__new__(UnifiedSentenceMinerWindow)
+        window.is_anki_connected = False
+        window.anki_status_label = SimpleNamespace(text=None, setText=lambda value: setattr(window.anki_status_label, "text", value))
+        window.health_label = SimpleNamespace(text=None, setText=lambda value: setattr(window.health_label, "text", value))
+        window.translation_mode = "online"
+        window.pdf_status_bar = PDFStatusBar()
+
+        UnifiedSentenceMinerWindow._on_anki_connection_changed(window, True)
+
+        self.assertTrue(window.is_anki_connected)
+        self.assertEqual(window.anki_status_label.text, "Anki: connected")
+        self.assertEqual(window.pdf_status_bar.anki_status_label.text(), "Anki: Connected ✓")
+
+
+class PdfNavigationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _make_scroll_area(self):
+        content = QWidget()
+        content.resize(100, 1000)
+        scroll_area = QScrollArea()
+        scroll_area.resize(100, 120)
+        scroll_area.setWidget(content)
+        scroll_area.show()
+        self.app.processEvents()
+        scroll_area.verticalScrollBar().setValue(80)
+        return scroll_area
+
+    def _make_window_stub(self):
+        stub = SimpleNamespace()
+        stub.doc = SimpleNamespace(page_count=5)
+        stub.current_page_index = 2
+        stub.selection = SimpleNamespace(pdf=SimpleNamespace(highlight_bboxes=[]))
+        stub.scroll_area = self._make_scroll_area()
+        stub.clear_calls = 0
+        stub.render_calls = 0
+        stub.persist_calls = 0
+        stub._clear_selection_state = lambda: setattr(stub, "clear_calls", stub.clear_calls + 1)
+        stub._render_current_page = lambda: setattr(stub, "render_calls", stub.render_calls + 1)
+        stub._persist_session = lambda: setattr(stub, "persist_calls", stub.persist_calls + 1)
+        stub._reset_pdf_scroll_position = UnifiedSentenceMinerWindow._reset_pdf_scroll_position.__get__(
+            stub, UnifiedSentenceMinerWindow
+        )
+        return stub
+
+    def test_jump_to_page_resets_scroll_to_top(self):
+        window = self._make_window_stub()
+
+        UnifiedSentenceMinerWindow._jump_to_page(window, 5)
+
+        self.assertEqual(window.current_page_index, 4)
+        self.assertEqual(window.scroll_area.verticalScrollBar().value(), 0)
+        self.assertEqual(window.render_calls, 1)
+        self.assertEqual(window.persist_calls, 1)
+
+    def test_prev_page_resets_scroll_to_top(self):
+        window = self._make_window_stub()
+
+        UnifiedSentenceMinerWindow._prev_page(window)
+
+        self.assertEqual(window.current_page_index, 1)
+        self.assertEqual(window.scroll_area.verticalScrollBar().value(), 0)
+
+    def test_next_page_resets_scroll_to_top(self):
+        window = self._make_window_stub()
+
+        UnifiedSentenceMinerWindow._next_page(window)
+
+        self.assertEqual(window.current_page_index, 3)
+        self.assertEqual(window.scroll_area.verticalScrollBar().value(), 0)
+
+    def test_load_pdf_schedules_fit_width_and_scroll_reset(self):
+        scheduled_callbacks = []
+        window = SimpleNamespace()
+        window.doc = None
+        window.current_pdf_path = None
+        window.current_page_index = 0
+        window.current_source_name = ""
+        window.current_source_location = ""
+        window.user_data = {}
+        window.selection = SimpleNamespace(pdf=SimpleNamespace(highlight_bboxes=[]))
+        window.command_bar = SimpleNamespace(
+            set_title=lambda *args: None,
+            set_file_loaded=lambda *args: None,
+            set_page_info=lambda *args: None,
+        )
+        window.mode_manager = SimpleNamespace(
+            set_pdf_loaded=lambda *args, **kwargs: None,
+            set_mode=lambda *args, **kwargs: None,
+            current_mode=WorkspaceMode.WELCOME,
+        )
+        window._clear_selection_state = lambda: None
+        window._update_source_summary = lambda: None
+        window._persist_session = lambda: None
+        window._set_status = lambda *args, **kwargs: None
+        window._update_command_bar_stats = lambda: None
+        window._fit_width = lambda: None
+        window._reset_pdf_scroll_position = lambda: None
+
+        fake_doc = SimpleNamespace(page_count=9)
+
+        with patch("immersion_app.gui.main_window.fitz.open", return_value=fake_doc), patch(
+            "immersion_app.gui.main_window.QTimer.singleShot",
+            side_effect=lambda delay, callback: scheduled_callbacks.append((delay, callback)),
+        ), patch("immersion_app.core.recent_files.add_recent_file"), patch(
+            "immersion_app.gui.main_window.save_user_data"
+        ):
+            UnifiedSentenceMinerWindow._load_pdf(window, str(Path("book.pdf")), initial_page_index=3)
+
+        self.assertEqual(window.current_page_index, 3)
+        self.assertEqual(len(scheduled_callbacks), 2)
+
+    def test_render_current_page_inverts_pdf_in_dark_mode(self):
+        class FakeImage:
+            class Format:
+                Format_RGB888 = object()
+
+            last_created = None
+
+            def __init__(self, *_args):
+                self.inverted = 0
+                self.width = 20
+                self.height = 10
+                FakeImage.last_created = self
+
+            def copy(self):
+                return self
+
+            def invertPixels(self):
+                self.inverted += 1
+
+        class FakePainter:
+            def __init__(self, _image):
+                pass
+
+            def fillRect(self, *_args):
+                pass
+
+            def end(self):
+                pass
+
+        class FakePixmap:
+            @staticmethod
+            def fromImage(image):
+                return SimpleNamespace(size=lambda: SimpleNamespace(width=lambda: image.width, height=lambda: image.height))
+
+        fake_page = SimpleNamespace(
+            get_pixmap=lambda **_kwargs: SimpleNamespace(samples=b"", width=20, height=10, stride=60),
+            get_text=lambda _kind: [],
+        )
+        fake_doc = SimpleNamespace(load_page=lambda _index: fake_page, page_count=4)
+        window = SimpleNamespace(
+            doc=fake_doc,
+            current_page_index=0,
+            zoom_factor=1.0,
+            selection=SimpleNamespace(pdf=SimpleNamespace(highlight_bboxes=[], selected_words=[]), translation=""),
+            appearance_manager=SimpleNamespace(current_mode=AppearanceMode.DARK),
+            analytics_vocabulary=set(),
+            pdf_label=SimpleNamespace(setPixmap=lambda _pixmap: None, resize=lambda _size: None),
+            page_words=[],
+            page_word_order=[],
+            page_word_index={},
+            page_line_words={},
+            mode_manager=SimpleNamespace(current_mode=WorkspaceMode.WELCOME),
+            command_bar=SimpleNamespace(set_page_info=lambda *_args: None),
+            pdf_status_bar=SimpleNamespace(set_zoom_level=lambda *_args: None),
+            current_source_location="",
+            _prefetch_translations=lambda *_args: None,
+            _iter_unique_clean_words=lambda words: list(words),
+            _update_source_summary=lambda: None,
+            _build_line_index=lambda words: {},
+            _clean_word=lambda text: text,
+        )
+
+        with patch("immersion_app.gui.main_window.QImage", FakeImage), patch(
+            "immersion_app.gui.main_window.QPainter", FakePainter
+        ), patch("immersion_app.gui.main_window.QPixmap", FakePixmap), patch(
+            "immersion_app.gui.main_window.fitz.Matrix", lambda *_args: None
+        ):
+            UnifiedSentenceMinerWindow._render_current_page(window)
+
+        self.assertEqual(window.page_words, [])
+        self.assertEqual(FakeImage.last_created.inverted, 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

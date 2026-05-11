@@ -31,25 +31,10 @@ class TitleWidget(QWidget):
 
         # Title
         self.title_label = QLabel("No document loaded")
-        self.title_label.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.TEXT};
-                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: 12.5px;
-                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
-            }}
-        """)
 
         # Subtitle
         self.subtitle_label = QLabel("")
-        self.subtitle_label.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.TEXT_MUTED};
-                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: 11px;
-                font-weight: {Theme.FONT_WEIGHT_REGULAR};
-            }}
-        """)
+        self.refresh_theme()
 
         layout.addWidget(self.title_label)
         layout.addWidget(self.subtitle_label)
@@ -60,6 +45,24 @@ class TitleWidget(QWidget):
         self.subtitle_label.setText(subtitle)
         self.subtitle_label.setVisible(bool(subtitle))
 
+    def refresh_theme(self):
+        self.title_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 12.5px;
+                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
+            }}
+        """)
+        self.subtitle_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_MUTED};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 11px;
+                font-weight: {Theme.FONT_WEIGHT_REGULAR};
+            }}
+        """)
+
 
 class StatsChip(QLabel):
     """Stats display chip showing today/total counts."""
@@ -67,9 +70,9 @@ class StatsChip(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.update_stats(0, 0)
-        self._apply_style()
+        self.refresh_theme()
 
-    def _apply_style(self):
+    def refresh_theme(self):
         """Apply chip styling."""
         self.setStyleSheet(f"""
             QLabel {{
@@ -108,23 +111,22 @@ class CommandBar(QWidget):
         self._total_pages = 0
         self.setFixedHeight(Theme.COMMAND_BAR_HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._apply_background()
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 8, 16, 8)
-        layout.setSpacing(16)
+        layout.setContentsMargins(16, 4, 16, 4)
+        layout.setSpacing(12)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         # Left: Recent files button
         self.recent_button = QPushButton("Recent")
         self.recent_button.setStyleSheet(Theme.get_button_style("secondary"))
-        self.recent_button.setFixedHeight(32)
+        self.recent_button.setFixedHeight(28)
         self.recent_button.clicked.connect(self._show_recent_files_menu)
         layout.addWidget(self.recent_button)
 
         # Open button (always visible)
         self.open_button = QPushButton("Open...")
-        self.open_button.setFixedHeight(32)
+        self.open_button.setFixedHeight(28)
         self.open_button.setStyleSheet(Theme.get_button_style("secondary"))
         self.open_button.clicked.connect(self.open_requested.emit)
         layout.addWidget(self.open_button)
@@ -192,14 +194,38 @@ class CommandBar(QWidget):
 
         # Settings button
         self.settings_button = QPushButton("⚙")
-        self.settings_button.setFixedSize(32, 32)
+        self.settings_button.setFixedSize(28, 28)
         self.settings_button.setStyleSheet(Theme.get_button_style("ghost"))
         self.settings_button.clicked.connect(self.settings_requested.emit)
         layout.addWidget(self.settings_button)
+        self.refresh_theme()
 
-    def _apply_background(self):
-        """Apply command bar background styling."""
+    def refresh_theme(self):
+        """Reapply command bar styles for the active theme."""
         Theme.apply_command_bar_style(self)
+        self.title_widget.refresh_theme()
+        self.stats_chip.refresh_theme()
+        self.recent_button.setStyleSheet(Theme.get_button_style("secondary"))
+        self.open_button.setStyleSheet(Theme.get_button_style("secondary"))
+        self.close_button.setStyleSheet(Theme.get_button_style("ghost"))
+        self.page_prev_button.setStyleSheet(Theme.get_button_style("ghost"))
+        self.page_current_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {Theme.SURFACE_ALT};
+                color: {Theme.TEXT};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 5px;
+                padding: 3px 6px;
+                font-family: {Theme.FONT_MONO};
+                font-size: 12px;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {Theme.ACCENT_BORDER};
+                background-color: {Theme.SURFACE};
+            }}
+        """)
+        self.page_next_button.setStyleSheet(Theme.get_button_style("ghost"))
+        self.settings_button.setStyleSheet(Theme.get_button_style("ghost"))
 
     def set_title(self, title: str, subtitle: str = ""):
         """Update the document title."""
