@@ -1,11 +1,6 @@
-"""
-Centralized theme system for the immersion app.
+"""Centralized runtime-switchable theme system for the immersion app."""
 
-Defines all color tokens, typography constants, and styling helpers
-for the modern Arc/Linear-inspired interface.
-"""
-
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QWidget
 import re
 
@@ -13,28 +8,73 @@ import re
 class Theme:
     """Modern theme with cool neutrals and electric accent."""
 
+    _PALETTES = {
+        "light": {
+            "BG": "#fafafa",
+            "SURFACE": "#ffffff",
+            "SURFACE_ALT": "#f4f4f5",
+            "SURFACE_OVERLAY": "rgba(255, 255, 255, 0.95)",
+            "TOAST_BG": "rgba(255, 255, 255, 0.97)",
+            "BORDER": "rgba(0,0,0,0.07)",
+            "BORDER_STRONG": "rgba(0,0,0,0.12)",
+            "TEXT": "#18181b",
+            "TEXT_SOFT": "#52525b",
+            "TEXT_MUTED": "#a1a1aa",
+            "ACCENT": "#5b6cff",
+            "ACCENT_DARK": "#2f3fd9",
+            "ACCENT_SOFT": "rgba(91,108,255,0.10)",
+            "ACCENT_BORDER": "rgba(91,108,255,0.25)",
+            "HL_SEEN": "rgba(91,108,255,0.10)",
+            "HL_NEW": "rgba(91,108,255,0.0)",
+            "HL_SELECTED": "rgba(91,108,255,0.35)",
+        },
+        "dark": {
+            "BG": "#111318",
+            "SURFACE": "#181b22",
+            "SURFACE_ALT": "#222733",
+            "SURFACE_OVERLAY": "rgba(24, 27, 34, 0.96)",
+            "TOAST_BG": "rgba(24, 27, 34, 0.98)",
+            "BORDER": "rgba(255,255,255,0.10)",
+            "BORDER_STRONG": "rgba(255,255,255,0.18)",
+            "TEXT": "#f3f4f6",
+            "TEXT_SOFT": "#c3cad5",
+            "TEXT_MUTED": "#8d97a8",
+            "ACCENT": "#7c8cff",
+            "ACCENT_DARK": "#b5c0ff",
+            "ACCENT_SOFT": "rgba(124,140,255,0.18)",
+            "ACCENT_BORDER": "rgba(124,140,255,0.35)",
+            "HL_SEEN": "rgba(124,140,255,0.18)",
+            "HL_NEW": "rgba(124,140,255,0.03)",
+            "HL_SELECTED": "rgba(124,140,255,0.38)",
+        },
+    }
+
+    _mode = "light"
+
     # Base Colors
-    BG = "#fafafa"
-    SURFACE = "#ffffff"
-    SURFACE_ALT = "#f4f4f5"
-    BORDER = "rgba(0,0,0,0.07)"
-    BORDER_STRONG = "rgba(0,0,0,0.12)"
+    BG = ""
+    SURFACE = ""
+    SURFACE_ALT = ""
+    SURFACE_OVERLAY = ""
+    TOAST_BG = ""
+    BORDER = ""
+    BORDER_STRONG = ""
 
     # Text Colors
-    TEXT = "#18181b"
-    TEXT_SOFT = "#52525b"
-    TEXT_MUTED = "#a1a1aa"
+    TEXT = ""
+    TEXT_SOFT = ""
+    TEXT_MUTED = ""
 
     # Accent Colors
-    ACCENT = "#5b6cff"
-    ACCENT_DARK = "#2f3fd9"
-    ACCENT_SOFT = "rgba(91,108,255,0.10)"
-    ACCENT_BORDER = "rgba(91,108,255,0.25)"
+    ACCENT = ""
+    ACCENT_DARK = ""
+    ACCENT_SOFT = ""
+    ACCENT_BORDER = ""
 
     # Word Highlight States
-    HL_SEEN = "rgba(91,108,255,0.10)"    # Previously added to Anki
-    HL_NEW = "rgba(91,108,255,0.0)"     # Never seen before
-    HL_SELECTED = "rgba(91,108,255,0.35)"  # Currently focused
+    HL_SEEN = ""
+    HL_NEW = ""
+    HL_SELECTED = ""
 
     # Typography
     FONT_FAMILY = "Inter"
@@ -56,11 +96,27 @@ class Theme:
     FONT_WEIGHT_BOLD = 700
 
     # Spacing
-    COMMAND_BAR_HEIGHT = 56
+    COMMAND_BAR_HEIGHT = 44
     TRANSPORT_BAR_HEIGHT = 38
-    STATUS_BAR_HEIGHT = 32
+    STATUS_BAR_HEIGHT = 28
     CHAPTER_RAIL_WIDTH = 48
     POPOVER_WIDTH = 320
+
+    @classmethod
+    def apply_mode(cls, mode: str) -> None:
+        """Activate the requested palette."""
+        palette = cls._PALETTES["dark" if str(mode).lower() == "dark" else "light"]
+        cls._mode = "dark" if str(mode).lower() == "dark" else "light"
+        for token_name, token_value in palette.items():
+            setattr(cls, token_name, token_value)
+
+    @classmethod
+    def current_mode(cls) -> str:
+        return cls._mode
+
+    @classmethod
+    def is_dark(cls) -> bool:
+        return cls._mode == "dark"
 
     @staticmethod
     def to_qcolor(color_string: str) -> QColor:
@@ -195,6 +251,36 @@ class Theme:
         return ""
 
     @staticmethod
+    def get_menu_style() -> str:
+        """Get stylesheet for menus and submenus."""
+        return f"""
+            QMenu {{
+                background-color: {Theme.SURFACE};
+                color: {Theme.TEXT};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 8px;
+                padding: 4px;
+            }}
+            QMenu::item {{
+                background-color: transparent;
+                color: {Theme.TEXT};
+                padding: 8px 12px;
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{
+                background-color: {Theme.SURFACE_ALT};
+            }}
+            QMenu::item:disabled {{
+                color: {Theme.TEXT_MUTED};
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background-color: {Theme.BORDER};
+                margin: 4px 0px;
+            }}
+        """
+
+    @staticmethod
     def get_input_style() -> str:
         """Get stylesheet for input fields."""
         return f"""
@@ -260,3 +346,70 @@ class Theme:
                     font-weight: {Theme.FONT_WEIGHT_REGULAR};
                 }}
             """
+
+    @staticmethod
+    def get_scrollbar_style(orientation: str = "vertical") -> str:
+        """
+        Get stylesheet for custom scrollbar styling.
+
+        Args:
+            orientation: "vertical", "horizontal", or "both"
+
+        Returns:
+            CSS stylesheet string
+        """
+        if orientation not in {"vertical", "horizontal", "both"}:
+            raise ValueError("orientation must be 'vertical', 'horizontal', or 'both'")
+
+        vertical_style = f"""
+            QScrollBar:vertical {{
+                background-color: transparent;
+                width: 8px;
+                margin: 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: {Theme.TEXT_MUTED};
+                border-radius: 4px;
+                min-height: 20px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {Theme.TEXT};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+        """
+
+        horizontal_style = f"""
+            QScrollBar:horizontal {{
+                background-color: transparent;
+                height: 8px;
+                margin: 0px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background-color: {Theme.TEXT_MUTED};
+                border-radius: 4px;
+                min-width: 20px;
+            }}
+            QScrollBar::handle:horizontal:hover {{
+                background-color: {Theme.TEXT};
+            }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                width: 0px;
+            }}
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+                background: none;
+            }}
+        """
+
+        if orientation == "vertical":
+            return vertical_style
+        if orientation == "horizontal":
+            return horizontal_style
+        return f"{vertical_style}\n{horizontal_style}"
+
+
+Theme.apply_mode("light")

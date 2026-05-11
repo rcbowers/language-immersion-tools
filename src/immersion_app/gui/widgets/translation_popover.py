@@ -22,14 +22,6 @@ class TranslationPopover(QWidget):
 
         # Don't steal focus from the main window
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-
-        self.setStyleSheet(f"""
-            TranslationPopover {{
-                background-color: {Theme.SURFACE};
-                border: 1px solid {Theme.BORDER_STRONG};
-                border-radius: 10px;
-            }}
-        """)
         self.hide()
         self._build_ui()
 
@@ -39,15 +31,8 @@ class TranslationPopover(QWidget):
         layout.setSpacing(8)
 
         self.translation_label = QLabel("")
-        self.translation_label.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.ACCENT_DARK};
-                background: transparent;
-                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: 13px;
-                font-weight: {Theme.FONT_WEIGHT_MEDIUM};
-            }}
-        """)
+        self.translation_label.setWordWrap(True)
+        self.translation_label.setMaximumWidth(300)
         layout.addWidget(self.translation_label)
 
         self.add_button = QPushButton("+")
@@ -58,9 +43,29 @@ class TranslationPopover(QWidget):
 
         self.edit_button = QPushButton("Edit")
         self.edit_button.setFixedHeight(26)
-        self.edit_button.setStyleSheet(Theme.get_button_style("secondary"))
         self.edit_button.clicked.connect(self.edit_requested.emit)
         layout.addWidget(self.edit_button)
+        self.refresh_theme()
+
+    def refresh_theme(self):
+        self.setStyleSheet(f"""
+            TranslationPopover {{
+                background-color: {Theme.SURFACE};
+                border: 1px solid {Theme.BORDER_STRONG};
+                border-radius: 10px;
+            }}
+        """)
+        self.translation_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.ACCENT_DARK};
+                background: transparent;
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 13px;
+                font-weight: {Theme.FONT_WEIGHT_MEDIUM};
+            }}
+        """)
+        self.add_button.setStyleSheet(Theme.get_button_style("compact_accent"))
+        self.edit_button.setStyleSheet(Theme.get_button_style("secondary"))
 
     def set_content(
         self,

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for subtitle hit-testing and unified selection helpers."""
 
+from datetime import datetime
 import os
 import unittest
 from unittest.mock import patch
@@ -10,6 +11,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QTextEdit
 
+from immersion_app.core.anki_analytics import AnkiAnalyticsManager
+from immersion_app.core.selection_state import SelectionState
+from immersion_app.core.user_data import default_user_data
 from immersion_app.gui.main_window import UnifiedSentenceMinerWindow
 from immersion_app.gui.widgets.subtitle_widget import ClickableSubtitleLabel
 from immersion_app.media.subtitle_parser import SRTParser
@@ -98,6 +102,10 @@ class SubtitleWidgetTests(unittest.TestCase):
 
 
 class UnifiedSelectionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
     def _make_selection_stub(self):
         class _Stub:
             pass
@@ -109,22 +117,21 @@ class UnifiedSelectionTests(unittest.TestCase):
         stub.add_now_button = QPushButton()
         stub.add_queue_button = QPushButton()
         stub.source_header_label = QLabel()
-        stub.selected_word = ""
-        stub.selected_sentence = ""
-        stub.selected_translation = ""
+        stub.selection = SelectionState()
         stub.current_source_name = ""
         stub.current_source_location = ""
         stub.selected_subtitle_indices = []
         stub.selected_pdf_words = []
         stub.translation_popover = type("_Popover", (), {"isVisible": lambda self: False, "close": lambda self: None})()
+        stub.mode_manager = type("_ModeManager", (), {"mode_string": lambda self: "video"})()
         stub._close_popover = lambda: None
         return stub
 
     def _make_add_stub(self):
         window = self._make_selection_stub()
-        window.selected_word = "hola"
-        window.selected_sentence = "hola mundo"
-        window.selected_translation = "hello"
+        window.selection.word = "hola"
+        window.selection.sentence = "hola mundo"
+        window.selection.translation = "hello"
         window.current_source_type = "video"
         window.current_source_name = "clip.mp4"
         window.current_source_location = "00:01"
@@ -160,9 +167,7 @@ class UnifiedSelectionTests(unittest.TestCase):
         window = UnifiedSentenceMinerWindow.__new__(UnifiedSentenceMinerWindow)
         window.current_subtitle = subtitle
         window.subtitle_selection_anchor = None
-        window.selected_word = ""
-        window.selected_sentence = ""
-        window.selected_translation = ""
+        window.selection = SelectionState()
         window.current_source_type = "video"
         window.current_source_location = "00:00"
         window.selected_subtitle_indices = []
@@ -189,8 +194,8 @@ class UnifiedSelectionTests(unittest.TestCase):
 
         UnifiedSentenceMinerWindow._on_subtitle_click(window, "hola", 0, Qt.KeyboardModifier.NoModifier)
 
-        self.assertEqual(window.selected_word, "hola")
-        self.assertEqual(window.selected_sentence, subtitle.text)
+        self.assertEqual(window.selection.word, "hola")
+        self.assertEqual(window.selection.sentence, subtitle.text)
         self.assertEqual(window._requested_translation, "hola")
         self.assertEqual(window.subtitle_label.ranges, [(0, 0)])
 
@@ -202,28 +207,28 @@ class UnifiedSelectionTests(unittest.TestCase):
         window._update_action_buttons = lambda: UnifiedSentenceMinerWindow._update_action_buttons(window)
         window.word_value.setText("por si acaso")
         UnifiedSentenceMinerWindow._translate_word_field_input(window)
-        self.assertEqual(window.selected_word, "por si acaso")
+        self.assertEqual(window.selection.word, "por si acaso")
         self.assertEqual(requested, ["por si acaso"])
 
     def test_manual_word_input_ignores_empty_submit(self):
         window = self._make_selection_stub()
         requested = []
-        window.selected_word = "hola"
-        window.selected_translation = "hello"
+        window.selection.word = "hola"
+        window.selection.translation = "hello"
         window._request_translation = requested.append
         window._update_selection_panel = lambda: UnifiedSentenceMinerWindow._update_selection_panel(window)
         window._update_action_buttons = lambda: UnifiedSentenceMinerWindow._update_action_buttons(window)
         window.word_value.setText("   ")
         UnifiedSentenceMinerWindow._translate_word_field_input(window)
-        self.assertEqual(window.selected_word, "")
-        self.assertEqual(window.selected_translation, "")
+        self.assertEqual(window.selection.word, "")
+        self.assertEqual(window.selection.translation, "")
         self.assertEqual(requested, [])
 
     def test_manual_translation_enables_card_actions_without_context(self):
         window = self._make_selection_stub()
-        window.selected_word = "por si acaso"
-        window.selected_sentence = ""
-        window.selected_translation = "just in case"
+        window.selection.word = "por si acaso"
+        window.selection.sentence = ""
+        window.selection.translation = "just in case"
         UnifiedSentenceMinerWindow._update_action_buttons(window)
         self.assertTrue(window.add_now_button.isEnabled())
         self.assertTrue(window.add_queue_button.isEnabled())
@@ -367,7 +372,11 @@ class TranslationPrefetchTests(unittest.TestCase):
         window._translation_context_version = 0
         window.current_request_id = 0
         window._next_translation_request_id = 0
-        window.selected_translation = ""
+        window._online_backend = object()
+        window._offline_backend = object()
+        window._cache_hits = 0
+        window._cache_misses = 0
+        window.selection = SelectionState()
         window.started_tasks = []
         window.thread_pool = type("_Pool", (), {"start": lambda self, task: window.started_tasks.append(task)})()
         window._update_selection_panel = lambda: None
@@ -404,23 +413,23 @@ class TranslationPrefetchTests(unittest.TestCase):
 
         window._request_translation("hola")
 
-        self.assertEqual(window.selected_translation, "hello")
+        self.assertEqual(window.selection.translation, "hello")
         self.assertEqual(window.started_tasks, [])
 
     def test_prefetch_completion_populates_cache_without_overwriting_visible_translation(self):
         window = self._make_translation_stub()
-        window.selected_translation = "keep me"
+        window.selection.translation = "keep me"
 
         window._prefetch_translations(["hola"])
         self.assertEqual(len(window.started_tasks), 1)
 
-        window.current_request_id = 999
-        window._on_translation_done(1, "hola", "hello")
+        window.mode_manager = type("_ModeManager", (), {"current_mode": None})()
+        window._on_batch_translation_done(["hola"], ["hello"])
 
         self.assertEqual(window.translation_cache[("es", "en", "hola")], "hello")
-        self.assertEqual(window.selected_translation, "keep me")
+        self.assertEqual(window.selection.translation, "keep me")
 
-    def test_visible_request_reuses_existing_prefetch_inflight(self):
+    def test_visible_request_starts_new_request_when_prefetch_is_batch_only(self):
         window = self._make_translation_stub()
 
         window._prefetch_translations(["hola"])
@@ -428,14 +437,14 @@ class TranslationPrefetchTests(unittest.TestCase):
 
         window._request_translation("hola")
 
-        self.assertEqual(len(window.started_tasks), 1)
+        self.assertEqual(len(window.started_tasks), 2)
         self.assertEqual(window.current_request_id, 1)
-        self.assertEqual(window.selected_translation, "translating...")
+        self.assertEqual(window.selection.translation, "translating...")
         self.assertTrue(window._translation_requests[1]["visible"])
 
         window._on_translation_done(1, "hola", "hello")
 
-        self.assertEqual(window.selected_translation, "hello")
+        self.assertEqual(window.selection.translation, "hello")
         self.assertEqual(window.translation_cache[("es", "en", "hola")], "hello")
 
     def test_prefetch_deduplicates_inflight_words(self):
@@ -444,6 +453,90 @@ class TranslationPrefetchTests(unittest.TestCase):
         window._prefetch_translations(["hola", "hola"])
 
         self.assertEqual(len(window.started_tasks), 1)
+
+
+class AnkiStatsUpdateTests(unittest.TestCase):
+    def _make_stats_stub(self):
+        class _CommandBar:
+            def __init__(self):
+                self.stats_calls = []
+
+            def set_stats(self, today_count, total_count):
+                self.stats_calls.append((today_count, total_count))
+
+        class _SubtitleLabel:
+            def __init__(self):
+                self.vocabulary_seen = []
+
+            def set_vocabulary_seen(self, vocabulary_seen):
+                self.vocabulary_seen.append(set(vocabulary_seen))
+
+        window = UnifiedSentenceMinerWindow.__new__(UnifiedSentenceMinerWindow)
+        window.user_data = default_user_data()
+        window.anki_analytics = AnkiAnalyticsManager(window.user_data)
+        window.analytics_vocabulary = set()
+        window.command_bar = _CommandBar()
+        window.subtitle_label = _SubtitleLabel()
+        window.doc = None
+        window.current_pdf_path = ""
+        window._render_current_page = lambda: None
+        window._refresh_word_highlights = UnifiedSentenceMinerWindow._refresh_word_highlights.__get__(
+            window, UnifiedSentenceMinerWindow
+        )
+        window._on_anki_analytics_changed = UnifiedSentenceMinerWindow._on_anki_analytics_changed.__get__(
+            window, UnifiedSentenceMinerWindow
+        )
+        window.anki_analytics.stats_changed.connect(window._on_anki_analytics_changed)
+        return window
+
+    def test_record_successful_card_add_updates_command_bar_today_count(self):
+        window = self._make_stats_stub()
+
+        with patch("immersion_app.core.anki_analytics.save_user_data"):
+            UnifiedSentenceMinerWindow._record_successful_card_add(window, "hola")
+
+        self.assertEqual(window.command_bar.stats_calls[-1], (1, 1))
+        self.assertEqual(window.analytics_vocabulary, {"hola"})
+        self.assertEqual(window.subtitle_label.vocabulary_seen[-1], {"hola"})
+
+    def test_process_queue_updates_command_bar_today_count_per_successful_entry(self):
+        window = self._make_stats_stub()
+        window.is_anki_connected = True
+        window.sentence_counts = {}
+        window._refresh_queue_summary = lambda: None
+        window._record_successful_card_add = UnifiedSentenceMinerWindow._record_successful_card_add.__get__(
+            window, UnifiedSentenceMinerWindow
+        )
+
+        entries = [
+            {
+                "sentence": "hola mundo",
+                "word": "hola",
+                "translation": "hello",
+                "created_at": datetime(2026, 5, 11, 8, 0).isoformat(timespec="seconds"),
+            },
+            {
+                "sentence": "adios mundo",
+                "word": "adios",
+                "translation": "goodbye",
+                "created_at": datetime(2026, 5, 11, 8, 5).isoformat(timespec="seconds"),
+            },
+        ]
+
+        with (
+            patch("immersion_app.gui.main_window.load_queue_entries", return_value=entries),
+            patch("immersion_app.gui.main_window.save_queue_entries") as save_queue_entries,
+            patch("immersion_app.gui.main_window.append_processed_log") as append_processed_log,
+            patch("immersion_app.gui.main_window.add_anki_card"),
+            patch("immersion_app.gui.main_window.QMessageBox.information"),
+            patch("immersion_app.core.anki_analytics.save_user_data"),
+        ):
+            UnifiedSentenceMinerWindow._process_queue(window)
+
+        self.assertEqual(window.command_bar.stats_calls[-1], (2, 2))
+        self.assertEqual(window.analytics_vocabulary, {"hola", "adios"})
+        append_processed_log.assert_called_once_with(entries)
+        save_queue_entries.assert_called_once_with([])
 
 
 if __name__ == "__main__":

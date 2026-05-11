@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 import fitz
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence, QPainter, QPen, QPixmap, QTextCursor
+from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -41,8 +41,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from immersion_app.core.anki import add_anki_card, fetch_deck_words, test_anki_connection
+from immersion_app.core.anki import add_anki_card
+from immersion_app.core.anki_analytics import AnkiAnalyticsManager
+from immersion_app.core.anki_service import AnkiService
 from immersion_app.core.anki_snapshot import load_snapshot, save_snapshot
+from immersion_app.core.appearance_manager import AppearanceManager, AppearanceMode
 from immersion_app.core.language_config import (
     DEFAULT_LEARNING_LANGUAGE,
     DEFAULT_NATIVE_LANGUAGE,
@@ -142,25 +145,6 @@ class BatchTranslateTask(QRunnable):
                 return
 
 
-class AnkiStatusSignals(QObject):
-    finished = Signal(int, bool, object)
-
-
-class AnkiStatusTask(QRunnable):
-    def __init__(self, request_id):
-        super().__init__()
-        self.request_id = request_id
-        self.signals = AnkiStatusSignals()
-
-    def run(self):
-        try:
-            connected = test_anki_connection()
-            words = fetch_deck_words() if connected else None
-            self.signals.finished.emit(self.request_id, connected, words)
-        except RuntimeError:
-            return
-
-
 class SubtitleGenerationSignals(QObject):
     progress = Signal(str)
     finished = Signal(str)
@@ -198,11 +182,20 @@ class SubtitleGeneratorWorker(QRunnable):
 
 class ClickablePdfLabel(QLabel):
     clicked = Signal(QPoint, object)
+    hovered = Signal(QPoint, object)
+
+    def __init__(self):
+        super().__init__()
+        self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(event.position().toPoint(), event.modifiers())
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        self.hovered.emit(event.position().toPoint(), event.modifiers())
+        super().mouseMoveEvent(event)
 
 
 class SubtitleGeneratorDialog(QDialog):
@@ -255,6 +248,11 @@ class SubtitleGeneratorDialog(QDialog):
         button_row.addWidget(cancel_button)
         layout.addLayout(button_row)
 
+    def refresh_theme(self):
+        self.setStyleSheet(f"QDialog {{ background-color: {Theme.BG}; }}")
+        self.language_input.setStyleSheet(Theme.get_input_style())
+        self.status_label.setStyleSheet(Theme.get_label_style("caption"))
+
     def selected_model(self):
         return self.model_combo.currentText()
 
@@ -294,6 +292,7 @@ class QueueDialog(QDialog):
             QListWidget::item:hover {{
                 background-color: {Theme.SURFACE_ALT};
             }}
+            {Theme.get_scrollbar_style()}
         """)
         layout.addWidget(self.list_widget)
 
@@ -308,6 +307,30 @@ class QueueDialog(QDialog):
         button_row.addWidget(close_button)
         layout.addLayout(button_row)
 
+    def refresh_theme(self):
+        self.setStyleSheet(f"QDialog {{ background-color: {Theme.BG}; }}")
+        self.summary_label.setStyleSheet(Theme.get_label_style("body"))
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {Theme.SURFACE};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 6px;
+                padding: 8px;
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 13px;
+                color: {Theme.TEXT};
+            }}
+            QListWidget::item {{
+                padding: 8px;
+                border-radius: 4px;
+            }}
+            QListWidget::item:hover {{
+                background-color: {Theme.SURFACE_ALT};
+            }}
+            {Theme.get_scrollbar_style()}
+        """)
+        self.process_button.setStyleSheet(Theme.get_button_style("primary"))
+
     def refresh(self, entries):
         self.list_widget.clear()
         self.summary_label.setText(f"Queued cards: {len(entries)} | Storage: {QUEUE_JSON_PATH}")
@@ -320,7 +343,7 @@ class QueueDialog(QDialog):
 class UnifiedSentenceMinerWindow(QMainWindow):
     SUPPORTED_CONTENT_FILTER = "Content Files (*.pdf *.mp4 *.mkv *.avi *.mov *.webm)"
 
-    def __init__(self, console_capture=None):
+    def __init__(self):
         super().__init__()
         self.setWindowTitle("LinguaLoop Workspace")
         self.resize(1680, 980)
@@ -329,7 +352,6 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._subtitle_thread_pool = QThreadPool.globalInstance()
         self.current_request_id = 0
         self._next_translation_request_id = 0
-        self.anki_check_request_id = 0
         self.translation_cache = {}
         self._translation_requests = {}
         self._translation_requests_by_key = {}
@@ -338,11 +360,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._offline_backend = None
         self._cache_hits = 0
         self._cache_misses = 0
-        self.console_capture = console_capture
         self.user_data = load_user_data()
-        self.analytics_vocabulary = set(self.user_data.get("analytics", {}).get("vocabulary_seen", []))
+        self.appearance_manager = AppearanceManager(
+            self.user_data["preferences"].get("theme_mode", AppearanceMode.LIGHT.value)
+        )
+        Theme.apply_mode(self.appearance_manager.mode_string())
         snapshot_words = load_snapshot()
-        self.analytics_vocabulary.update(snapshot_words)
+        self.anki_analytics = AnkiAnalyticsManager(self.user_data, snapshot_words=snapshot_words)
+        self.analytics_vocabulary = set(self.anki_analytics.vocabulary_seen)
         logger.info(f"Analytics vocabulary initialized with {len(self.analytics_vocabulary)} words ({len(snapshot_words)} from snapshot)")
 
         # Log startup configuration
@@ -352,6 +377,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         logger.info(f"Learning Language: {self.user_data['preferences']['learning_language']}")
         logger.info(f"Native Language: {self.user_data['preferences']['native_language']}")
         logger.info(f"Translation Mode: {self.user_data['preferences']['translation_mode']}")
+        logger.info(f"Theme Mode: {self.user_data['preferences'].get('theme_mode', 'light')}")
         logger.info(f"Video Playback Speed: {self.user_data['preferences']['video_playback_speed']}x")
         logger.info(f"Recent Files: {len(self.user_data['recent_files'])} file(s)")
         logger.info(f"Total Cards Added: {self.user_data['analytics']['cards_added_total']}")
@@ -377,6 +403,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.mode_manager = ModeManager()
         self.selection = SelectionState()
         self.shortcut_manager = ShortcutManager()
+        self.anki_service = AnkiService(thread_pool=self.thread_pool, parent=self)
 
         self.current_source_name = ""
         self.current_source_location = ""
@@ -409,11 +436,15 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.queue_dialog = None
 
         self._build_ui()
+        self.appearance_manager.appearance_changed.connect(self._on_appearance_changed)
+        self._bind_anki_service()
+        self.anki_analytics.stats_changed.connect(self._on_anki_analytics_changed)
         self._determine_translation_mode()
         self._refresh_anki_status()
         self._restore_last_session()
         self._refresh_queue_summary()
         self._update_command_bar_stats()
+        self._apply_theme(refresh_pdf=False)
 
     def _build_ui(self):
         # Create main container
@@ -448,10 +479,6 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.workspace_stack.addWidget(self.video_page)
         main_layout.addWidget(self.workspace_stack, stretch=1)
 
-        self.console_pane = self._build_console_pane()
-        self.console_pane.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        main_layout.addWidget(self.console_pane, stretch=0)
-
         self.setCentralWidget(main_container)
 
         # Apply background theme
@@ -473,6 +500,103 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         # Connect mode manager signals
         self.mode_manager.mode_changed.connect(self._on_mode_changed_internal)
         self.mode_manager.mode_transition_failed.connect(self._on_mode_transition_failed)
+
+    def _on_appearance_changed(self, mode: str):
+        logger.info(f"Appearance changed to {mode}")
+        Theme.apply_mode(mode)
+        self.user_data["preferences"]["theme_mode"] = mode
+        save_user_data(self.user_data)
+        self._apply_theme(refresh_pdf=True)
+
+    def _apply_theme(self, refresh_pdf: bool = True):
+        self.setStyleSheet(f"QMainWindow {{ background-color: {Theme.BG}; }}")
+        if hasattr(self, "command_bar"):
+            self.command_bar.refresh_theme()
+        if hasattr(self, "translation_popover"):
+            self.translation_popover.refresh_theme()
+        if hasattr(self, "card_feedback_toast"):
+            self.card_feedback_toast.refresh_theme()
+        if hasattr(self, "welcome_page"):
+            self._refresh_welcome_page_theme()
+        if hasattr(self, "pdf_page"):
+            self._refresh_pdf_page_theme()
+        if hasattr(self, "video_page"):
+            self._refresh_video_page_theme()
+        if self.queue_dialog is not None:
+            self.queue_dialog.refresh_theme()
+        if self.doc and refresh_pdf:
+            self._render_current_page()
+
+    def _refresh_welcome_page_theme(self):
+        self.welcome_page.setStyleSheet(f"QWidget {{ background-color: {Theme.BG}; }}")
+        self.welcome_title_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: {Theme.FONT_SIZE_TITLE};
+                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
+                margin-bottom: 12px;
+            }}
+        """)
+        self.welcome_subtitle_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_SOFT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 15px;
+                font-weight: {Theme.FONT_WEIGHT_REGULAR};
+                margin-bottom: 32px;
+            }}
+        """)
+        self.welcome_recent_heading.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_MUTED};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 11px;
+                font-weight: {Theme.FONT_WEIGHT_MEDIUM};
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 8px;
+            }}
+        """)
+        self.welcome_recent_files_list.refresh()
+        self.welcome_recent_files_list.refresh_theme()
+        self.welcome_open_button.setStyleSheet(Theme.get_button_style("primary"))
+        self.welcome_queue_button.setStyleSheet(Theme.get_button_style("secondary"))
+        self.welcome_shortcuts_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_MUTED};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 12px;
+                font-weight: {Theme.FONT_WEIGHT_REGULAR};
+                margin-top: 48px;
+            }}
+        """)
+
+    def _refresh_pdf_page_theme(self):
+        self.pdf_page.setStyleSheet(f"QWidget {{ background-color: {Theme.BG}; }}")
+        self.scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                border: none;
+                background-color: {Theme.BG};
+            }}
+            {Theme.get_scrollbar_style()}
+        """)
+        self.pdf_status_bar.refresh_theme()
+
+    def _refresh_video_page_theme(self):
+        self.video_page.setStyleSheet("QWidget { background-color: black; }")
+        self.subtitle_label.setStyleSheet("""
+            ClickableSubtitleLabel {
+                background-color: transparent;
+            }
+        """)
+        self.transport_bar.refresh_theme()
+
+    def _bind_anki_service(self):
+        """Bind Anki service state changes into window UI updates."""
+        self.anki_service.status_check_started.connect(self._on_anki_status_check_started)
+        self.anki_service.connection_changed.connect(self._on_anki_connection_changed)
+        self.anki_service.vocabulary_loaded.connect(self._on_anki_vocabulary_loaded)
 
     def resizeEvent(self, event):
         """Handle window resize - update layouts and reposition overlays."""
@@ -520,6 +644,13 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.addAction(self._sc_add_queue)
         self.shortcut_manager.add_shortcut('global', self._sc_add_queue)
 
+        # PDF: Quick add to Anki
+        quick_add_action = QAction("Quick Add to Anki", self)
+        quick_add_action.setShortcut(QKeySequence("Ctrl+Space"))
+        quick_add_action.triggered.connect(self._add_now)
+        self.addAction(quick_add_action)
+        self.shortcut_manager.add_shortcut('pdf', quick_add_action)
+
         # GLOBAL: Close popover
         escape_action = QAction("Close Popover", self)
         escape_action.setShortcut(QKeySequence(Qt.Key.Key_Escape))
@@ -565,93 +696,6 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._sc_fit_width.triggered.connect(self._fit_width)
         self.addAction(self._sc_fit_width)
         self.shortcut_manager.add_shortcut('pdf', self._sc_fit_width)
-
-    def _build_console_pane(self):
-        pane = QWidget()
-        pane.setVisible(False)
-        pane.setStyleSheet(f"""
-            QWidget {{
-                background-color: {Theme.SURFACE};
-                border-top: 1px solid {Theme.BORDER};
-            }}
-        """)
-        layout = QVBoxLayout(pane)
-        layout.setContentsMargins(12, 6, 12, 8)
-        layout.setSpacing(6)
-
-        header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 0)
-        header_row.setSpacing(6)
-
-        title = QLabel("Python Console")
-        title.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.TEXT};
-                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: 12px;
-                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
-            }}
-        """)
-        header_row.addWidget(title)
-        header_row.addStretch()
-
-        close_button = QPushButton("Hide")
-        close_button.setFixedHeight(24)
-        close_button.setStyleSheet(Theme.get_button_style("secondary"))
-        close_button.clicked.connect(lambda: self._toggle_console_pane(False))
-        header_row.addWidget(close_button)
-        layout.addLayout(header_row)
-
-        self.console_output = QTextEdit()
-        self.console_output.setReadOnly(True)
-        self.console_output.setMinimumHeight(160)
-        self.console_output.setMaximumHeight(400)
-        self.console_output.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.console_output.setStyleSheet(f"""
-            QTextEdit {{
-                background-color: #111827;
-                color: #e4e4e7;
-                border: 1px solid rgba(255,255,255,0.08);
-                border-radius: 8px;
-                padding: 10px;
-                font-family: {Theme.FONT_MONO};
-                font-size: 12px;
-            }}
-        """)
-        layout.addWidget(self.console_output)
-        return pane
-
-    def connect_console_capture(self):
-        if self.console_capture is None:
-            return
-        self.console_capture.text_emitted.connect(self._append_console_text)
-
-    def _toggle_console_pane(self, checked=None):
-        if checked is None:
-            checked = not self.console_pane.isVisible()
-        checked = bool(checked)
-        self.console_pane.setVisible(checked)
-        if hasattr(self, "pdf_status_bar"):
-            self.pdf_status_bar.set_console_visible(checked)
-        if checked:
-            self.console_output.moveCursor(QTextCursor.MoveOperation.End)
-
-    def _append_console_text(self, text):
-        if not text:
-            return
-        cursor = self.console_output.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(text)
-        self.console_output.setTextCursor(cursor)
-        self.console_output.ensureCursorVisible()
-        document = self.console_output.document()
-        max_blocks = 3000
-        while document.blockCount() > max_blocks:
-            trim_cursor = self.console_output.textCursor()
-            trim_cursor.movePosition(QTextCursor.MoveOperation.Start)
-            trim_cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
-            trim_cursor.removeSelectedText()
-            trim_cursor.deleteChar()
 
     def _on_recent_file_selected(self, file_path: str, file_type: str):
         """
@@ -743,12 +787,26 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         """Show settings dialog (stub for now - will implement later)."""
         # TODO: Create a proper settings dialog
         menu = QMenu(self)
+        menu.setStyleSheet(Theme.get_menu_style())
         current_mode = self.mode_manager.current_mode
 
         menu.addAction("Toggle translation mode", self._toggle_translation_mode)
         menu.addSeparator()
 
+        appearance_menu = menu.addMenu("Appearance")
+        appearance_menu.setStyleSheet(Theme.get_menu_style())
+        appearance_group = QActionGroup(self)
+        appearance_group.setExclusive(True)
+        for label, mode in (("Light", AppearanceMode.LIGHT.value), ("Dark", AppearanceMode.DARK.value)):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(self.appearance_manager.mode_string() == mode)
+            action.triggered.connect(lambda checked=False, theme_mode=mode: self._set_appearance_mode(theme_mode))
+            appearance_group.addAction(action)
+            appearance_menu.addAction(action)
+
         learning_menu = menu.addMenu("Learning language")
+        learning_menu.setStyleSheet(Theme.get_menu_style())
         learning_group = QActionGroup(self)
         learning_group.setExclusive(True)
         for code in list_language_codes():
@@ -760,6 +818,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             learning_menu.addAction(action)
 
         native_menu = menu.addMenu("Native language")
+        native_menu.setStyleSheet(Theme.get_menu_style())
         native_group = QActionGroup(self)
         native_group.setExclusive(True)
         for code in list_language_codes():
@@ -771,8 +830,6 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             native_menu.addAction(action)
 
         menu.addSeparator()
-        menu.addAction("Start Anki", self._start_anki)
-        menu.addAction("Check Anki", self._refresh_anki_status)
 
         # Only show subtitle generation in video mode
         if current_mode == WorkspaceMode.VIDEO:
@@ -812,32 +869,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         layout.addStretch(1)
 
         # Title
-        title = QLabel("Open a PDF or video to start")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.TEXT};
-                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: {Theme.FONT_SIZE_TITLE};
-                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
-                margin-bottom: 12px;
-            }}
-        """)
-        layout.addWidget(title)
+        self.welcome_title_label = QLabel("Open a PDF or video to start")
+        self.welcome_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.welcome_title_label)
 
         # Subtitle
-        subtitle = QLabel("Click any word to see translations and build your vocabulary")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.TEXT_SOFT};
-                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: 15px;
-                font-weight: {Theme.FONT_WEIGHT_REGULAR};
-                margin-bottom: 32px;
-            }}
-        """)
-        layout.addWidget(subtitle)
+        self.welcome_subtitle_label = QLabel("Click any word to see translations and build your vocabulary")
+        self.welcome_subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.welcome_subtitle_label)
 
         # Recent files section
         from immersion_app.gui.widgets.welcome_recent_files import WelcomeRecentFilesList
@@ -847,20 +886,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         recent_layout.setSpacing(8)
 
         # Section heading
-        recent_heading = QLabel("Recent")
-        recent_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        recent_heading.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.TEXT_MUTED};
-                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: 11px;
-                font-weight: {Theme.FONT_WEIGHT_MEDIUM};
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-                margin-bottom: 8px;
-            }}
-        """)
-        recent_layout.addWidget(recent_heading)
+        self.welcome_recent_heading = QLabel("Recent")
+        self.welcome_recent_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        recent_layout.addWidget(self.welcome_recent_heading)
 
         # Recent files list widget
         self.welcome_recent_files_list = WelcomeRecentFilesList(self.user_data)
@@ -874,19 +902,17 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         button_row = QHBoxLayout()
         button_row.setSpacing(12)
 
-        open_button = QPushButton("Open Source")
-        open_button.setStyleSheet(Theme.get_button_style("primary"))
-        open_button.setFixedHeight(40)
-        open_button.setMinimumWidth(140)
-        open_button.clicked.connect(self._open_content_dialog)
-        button_row.addWidget(open_button)
+        self.welcome_open_button = QPushButton("Open Source")
+        self.welcome_open_button.setFixedHeight(40)
+        self.welcome_open_button.setMinimumWidth(140)
+        self.welcome_open_button.clicked.connect(self._open_content_dialog)
+        button_row.addWidget(self.welcome_open_button)
 
-        queue_button = QPushButton("View Queue")
-        queue_button.setStyleSheet(Theme.get_button_style("secondary"))
-        queue_button.setFixedHeight(40)
-        queue_button.setMinimumWidth(140)
-        queue_button.clicked.connect(self._show_queue_dialog)
-        button_row.addWidget(queue_button)
+        self.welcome_queue_button = QPushButton("View Queue")
+        self.welcome_queue_button.setFixedHeight(40)
+        self.welcome_queue_button.setMinimumWidth(140)
+        self.welcome_queue_button.clicked.connect(self._show_queue_dialog)
+        button_row.addWidget(self.welcome_queue_button)
 
         wrapper = QWidget()
         wrapper.setLayout(button_row)
@@ -895,18 +921,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         layout.addStretch(1)
 
         # Keyboard shortcuts hint
-        shortcuts = QLabel("Ctrl+O to open")
-        shortcuts.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        shortcuts.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.TEXT_MUTED};
-                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: 12px;
-                font-weight: {Theme.FONT_WEIGHT_REGULAR};
-                margin-top: 48px;
-            }}
-        """)
-        layout.addWidget(shortcuts)
+        self.welcome_shortcuts_label = QLabel("Ctrl+O to open")
+        self.welcome_shortcuts_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.welcome_shortcuts_label)
 
         return page
 
@@ -962,13 +979,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         reading_column = QWidget()
         reading_column.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         column_layout = QVBoxLayout(reading_column)
-        column_layout.setContentsMargins(36, 36, 36, 36)
+        column_layout.setContentsMargins(8, 4, 8, 4)
         column_layout.setSpacing(0)
 
         # PDF scroll area
         self.pdf_label = ClickablePdfLabel()
         self.pdf_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.pdf_label.clicked.connect(self._on_pdf_click)
+        self.pdf_label.hovered.connect(self._on_pdf_hover)
         self.pdf_label.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding
@@ -985,6 +1003,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
                 border: none;
                 background-color: {Theme.BG};
             }}
+            {Theme.get_scrollbar_style()}
         """)
         column_layout.addWidget(self.scroll_area, stretch=1)
 
@@ -997,7 +1016,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.pdf_status_bar.zoom_out_clicked.connect(self._zoom_out)
         self.pdf_status_bar.fit_width_clicked.connect(self._fit_width)
         self.pdf_status_bar.reset_zoom_clicked.connect(self._reset_zoom)
-        self.pdf_status_bar.console_toggled.connect(self._toggle_console_pane)
+        self.pdf_status_bar.anki_status_clicked.connect(self._refresh_anki_status)
         page_layout.addWidget(self.pdf_status_bar)
 
         return page
@@ -1191,6 +1210,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             logger.info("Switched to online translation mode")
             self.translation_mode = "online"
         self._update_translation_status_label()
+
+    def _set_appearance_mode(self, mode: str):
+        self.appearance_manager.set_mode(mode)
 
     def _get_translation_language_codes(self):
         if self.translation_mode == "offline":
@@ -1577,10 +1599,15 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _update_command_bar_stats(self):
         """Update the stats chip in the command bar."""
-        total_count = len(self.analytics_vocabulary)
-        # TODO: Calculate today_count when we add timestamps to vocabulary
-        today_count = 0
+        today_count = self.anki_analytics.today_count()
+        total_count = self.anki_analytics.total_vocabulary_count()
         self.command_bar.set_stats(today_count, total_count)
+
+    def _on_anki_analytics_changed(self, today_count: int, total_count: int):
+        """Refresh UI when Anki analytics change."""
+        self.analytics_vocabulary = set(self.anki_analytics.vocabulary_seen)
+        self.command_bar.set_stats(today_count, total_count)
+        self._refresh_word_highlights()
 
     def _jump_to_page(self, page_number: int):
         if not self.doc or not (1 <= page_number <= self.doc.page_count):
@@ -1589,7 +1616,13 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.selection.pdf.highlight_bboxes = []
         self._clear_selection_state()
         self._render_current_page()
+        self._reset_pdf_scroll_position()
         self._persist_session()
+
+    def _reset_pdf_scroll_position(self):
+        if not hasattr(self, "scroll_area") or self.scroll_area is None:
+            return
+        self.scroll_area.verticalScrollBar().setValue(0)
 
     def _replay_subtitle(self):
         """Jump to the start of the current subtitle."""
@@ -1616,30 +1649,29 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         return value[start:end].strip()
 
     def _refresh_anki_status(self):
-        self.anki_check_request_id += 1
-        request_id = self.anki_check_request_id
-        logger.info(f"Checking Anki connection status (request_id={request_id})")
-        self.anki_status_label.setText("Anki: checking...")
-        task = AnkiStatusTask(request_id)
-        task.signals.finished.connect(self._on_anki_status_checked)
-        self.thread_pool.start(task)
+        self.anki_service.refresh_connection()
 
-    def _on_anki_status_checked(self, request_id, connected, words):
-        if request_id != self.anki_check_request_id:
-            logger.debug(f"Anki status check stale (request_id={request_id}, current={self.anki_check_request_id}), ignoring")
-            return
-        vocab_count = len(words) if words is not None else 0
-        logger.info(f"Anki status checked (request_id={request_id}): connected={connected}, vocabulary_count={vocab_count}")
+    def _on_anki_status_check_started(self, request_id):
+        logger.info(f"Refreshing Anki connection state (request_id={request_id})")
+        self.anki_status_label.setText("Anki: checking...")
+        if hasattr(self, "pdf_status_bar"):
+            self.pdf_status_bar.set_anki_status(connected=False, checking=True)
+
+    def _on_anki_connection_changed(self, connected):
         self.is_anki_connected = connected
         self.anki_status_label.setText("Anki: connected" if connected else "Anki: not connected")
         self.health_label.setText(
             f"Anki: {'ready' if connected else 'not connected'}\nTranslation backend: {self.translation_mode}"
         )
-        if words is not None:
-            save_snapshot(words)
-            self.analytics_vocabulary.update(words)
-            logger.debug(f"Updated analytics vocabulary: {len(self.analytics_vocabulary)} words total")
-            self._refresh_word_highlights()
+        if hasattr(self, "pdf_status_bar"):
+            self.pdf_status_bar.set_anki_status(connected=connected, checking=False)
+
+    def _on_anki_vocabulary_loaded(self, words):
+        save_snapshot(words)
+        self.anki_analytics.set_snapshot_words(words)
+        self.analytics_vocabulary = set(self.anki_analytics.vocabulary_seen)
+        logger.debug(f"Updated analytics vocabulary: {len(self.analytics_vocabulary)} words total")
+        self._refresh_word_highlights()
 
     def _refresh_word_highlights(self):
         if self.doc and self.current_pdf_path:
@@ -1672,22 +1704,12 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         return sentence
 
     def _record_successful_card_add(self, word_text):
-        analytics = self.user_data["analytics"]
-        old_total = int(analytics.get("cards_added_total") or 0)
-        analytics["cards_added_total"] = old_total + 1
-        self.analytics_vocabulary.update(token.lower() for token in re.findall(r"\b\w+\b", word_text, flags=re.UNICODE))
-        analytics["vocabulary_seen"] = sorted(self.analytics_vocabulary)
-        logger.info(f"Recorded card add for '{word_text}' (total cards: {analytics['cards_added_total']}, vocabulary: {len(self.analytics_vocabulary)} words)")
-        save_user_data(self.user_data)
-
-        # Update UI to reflect new vocabulary state
-        self.subtitle_label.set_vocabulary_seen(self.analytics_vocabulary)
-        self._update_command_bar_stats()
-
-        # Re-render PDF to update word highlighting
-        if self.doc and self.mode_manager.current_mode == WorkspaceMode.PDF:
-            logger.debug("Re-rendering PDF to update word highlighting")
-            self._render_current_page()
+        self.anki_analytics.record_successful_card_add(word_text)
+        self.analytics_vocabulary = set(self.anki_analytics.vocabulary_seen)
+        logger.info(
+            f"Recorded card add for '{word_text}' "
+            f"(total cards: {self.anki_analytics.total_cards_added()}, vocabulary: {len(self.analytics_vocabulary)} words)"
+        )
 
     def _queue_payload(self):
         return {
@@ -1845,6 +1867,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         logger.debug(f"PDF page set to {self.current_page_index + 1}/{self.doc.page_count}")
         self._clear_selection_state()
         QTimer.singleShot(0, self._fit_width)
+        QTimer.singleShot(0, self._reset_pdf_scroll_position)
         self._update_source_summary()
         self._persist_session()
         self._set_status(f"Opened PDF: {Path(path).name}")
@@ -1880,6 +1903,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         matrix = fitz.Matrix(self.zoom_factor, self.zoom_factor)
         pix = page.get_pixmap(matrix=matrix, alpha=False)
         image = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
+        if self.appearance_manager.current_mode == AppearanceMode.DARK:
+            image.invertPixels()
 
         # Get words before painting
         self.page_words = page.get_text("words")
@@ -2002,6 +2027,52 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._render_current_page()
         self._request_translation(self.selection.word)
 
+    def _on_pdf_hover(self, point, modifiers):
+        """Show translation preview on Ctrl+hover, behaving exactly like a click."""
+        # Only act on Ctrl+hover
+        if not (modifiers & Qt.KeyboardModifier.ControlModifier):
+            return
+
+        if not self.doc or not self.page_words:
+            return
+
+        # Find word under cursor (same logic as click)
+        x_pdf = point.x() / self.zoom_factor
+        y_pdf = point.y() / self.zoom_factor
+        hit_word = None
+        for word in self.page_word_order:
+            if word[0] <= x_pdf <= word[2] and word[1] <= y_pdf <= word[3]:
+                hit_word = word
+                break
+
+        if not hit_word:
+            return
+
+        # Extract word text
+        word_text = self._clean_word(hit_word[4])
+        if not word_text:
+            return
+
+        # Skip if this is already the selected word (avoid redundant updates)
+        if word_text == self.selection.word:
+            return
+
+        # Set full selection state including highlights (same as click)
+        self.selection.pdf.highlight_bboxes = [(hit_word[0], hit_word[1], hit_word[2], hit_word[3])]
+        self.selection.pdf.selected_words = [hit_word]
+        self.selection.video.selected_indices = []
+        self.selection.word = word_text
+        self.selection.sentence = self._extract_context_for_selection([hit_word])
+        self.current_source_location = f"Page {self.current_page_index + 1}"
+
+        # Update UI and render highlight
+        self._update_selection_panel()
+        self._update_action_buttons()
+        self._render_current_page()
+
+        # Request translation (popover will show when translation completes)
+        self._request_translation(word_text)
+
     def _resolve_selected_words(self, hit_word, shift_pressed):
         hit_key = self._word_key(hit_word)
         if not shift_pressed or self.selection.pdf.anchor_key is None:
@@ -2030,6 +2101,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.selection.pdf.highlight_bboxes = []
         self._clear_selection_state()
         self._render_current_page()
+        self._reset_pdf_scroll_position()
         self._persist_session()
 
     def _next_page(self):
@@ -2039,6 +2111,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.selection.pdf.highlight_bboxes = []
         self._clear_selection_state()
         self._render_current_page()
+        self._reset_pdf_scroll_position()
         self._persist_session()
 
     def _zoom_in(self):
@@ -2066,7 +2139,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         reading_column = self.scroll_area.parent()
         # Account for margins (36px on each side = 72px total)
         available = max(200, reading_column.width() - 72)
-        self.zoom_factor = max(0.5, min(4.0, available / page.rect.width))
+        self.zoom_factor = max(0.5, min(4.0, (available / page.rect.width) - 0.25))
         self._render_current_page()
 
 

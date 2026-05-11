@@ -29,17 +29,9 @@ class WelcomeRecentFileItem(QWidget):
         icon = "📄" if self.file_type == "pdf" else "🎬"
         filename = self.file_data.get("name", "Unknown")
 
-        filename_label = QLabel(f"{icon}  {filename}")
-        filename_label.setStyleSheet(f"""
-            QLabel {{
-                color: {Theme.TEXT};
-                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: 15px;
-                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
-            }}
-        """)
-        filename_label.setWordWrap(False)
-        filename_label.setTextFormat(Qt.PlainText)
+        self.filename_label = QLabel(f"{icon}  {filename}")
+        self.filename_label.setWordWrap(False)
+        self.filename_label.setTextFormat(Qt.PlainText)
 
         # Metadata row (position + time)
         page_index = self.file_data.get("page_index", 0)
@@ -51,22 +43,38 @@ class WelcomeRecentFileItem(QWidget):
 
         metadata_text = f"{position_text} · {time_text}"
 
-        metadata_label = QLabel(metadata_text)
-        metadata_label.setStyleSheet(f"""
+        self.metadata_label = QLabel(metadata_text)
+
+        layout.addWidget(self.filename_label)
+        layout.addWidget(self.metadata_label)
+
+        self.setFixedHeight(64)
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+
+        # Set base style
+        self.refresh_theme()
+
+    def mousePressEvent(self, event):
+        """Handle mouse press."""
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.file_path, self.file_type)
+
+    def refresh_theme(self):
+        self.filename_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 15px;
+                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
+            }}
+        """)
+        self.metadata_label.setStyleSheet(f"""
             QLabel {{
                 color: {Theme.TEXT_MUTED};
                 font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
                 font-size: 12px;
             }}
         """)
-
-        layout.addWidget(filename_label)
-        layout.addWidget(metadata_label)
-
-        self.setFixedHeight(64)
-        self.setCursor(QCursor(Qt.PointingHandCursor))
-
-        # Set base style
         self.setStyleSheet(f"""
             WelcomeRecentFileItem {{
                 background-color: {Theme.SURFACE};
@@ -78,11 +86,6 @@ class WelcomeRecentFileItem(QWidget):
                 border-color: {Theme.ACCENT};
             }}
         """)
-
-    def mousePressEvent(self, event):
-        """Handle mouse press."""
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit(self.file_path, self.file_type)
 
 
 class WelcomeRecentFilesList(QWidget):
@@ -101,11 +104,11 @@ class WelcomeRecentFilesList(QWidget):
         main_layout.setSpacing(0)
 
         # Create scroll area for list
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll_area.setMaximumHeight(400)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setMaximumHeight(400)
 
         # Container for list items
         self.list_container = QWidget()
@@ -113,38 +116,12 @@ class WelcomeRecentFilesList(QWidget):
         self.list_layout.setContentsMargins(0, 0, 0, 0)
         self.list_layout.setSpacing(8)
 
-        scroll_area.setWidget(self.list_container)
-        main_layout.addWidget(scroll_area)
-
-        # Style scroll area
-        scroll_area.setStyleSheet(f"""
-            QScrollArea {{
-                background-color: transparent;
-                border: none;
-            }}
-            QScrollBar:vertical {{
-                background-color: transparent;
-                width: 8px;
-                margin: 0px;
-            }}
-            QScrollBar::handle:vertical {{
-                background-color: {Theme.TEXT_MUTED};
-                border-radius: 4px;
-                min-height: 20px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background-color: {Theme.TEXT};
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0px;
-            }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-                background: none;
-            }}
-        """)
+        self.scroll_area.setWidget(self.list_container)
+        main_layout.addWidget(self.scroll_area)
 
         # Populate list
         self.refresh()
+        self.refresh_theme()
 
     def refresh(self):
         """Refresh the list of recent files."""
@@ -180,3 +157,16 @@ class WelcomeRecentFilesList(QWidget):
                 }}
             """)
             self.list_layout.addWidget(empty_label)
+
+    def refresh_theme(self):
+        self.scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: transparent;
+                border: none;
+            }}
+            {Theme.get_scrollbar_style()}
+        """)
+        for index in range(self.list_layout.count()):
+            widget = self.list_layout.itemAt(index).widget()
+            if widget and hasattr(widget, "refresh_theme"):
+                widget.refresh_theme()
