@@ -3,7 +3,10 @@
 
 from dataclasses import dataclass
 import bisect
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -46,9 +49,16 @@ class SRTParser:
 
     @classmethod
     def from_file(cls, path):
-        with open(path, "r", encoding="utf-8-sig") as handle:
-            content = handle.read()
-        return cls.from_text(content)
+        logger.info(f"Loading subtitle file: {path}")
+        try:
+            with open(path, "r", encoding="utf-8-sig") as handle:
+                content = handle.read()
+            parser = cls.from_text(content)
+            logger.info(f"Subtitle file loaded: {len(parser.subtitles)} entries parsed from {path}")
+            return parser
+        except Exception as e:
+            logger.error(f"Failed to load subtitle file {path}: {e}", exc_info=True)
+            raise
 
     @classmethod
     def from_text(cls, content):

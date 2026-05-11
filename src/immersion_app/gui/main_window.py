@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import socket
 import subprocess
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import fitz
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal, QPropertyAnimation, QEasingCurve
@@ -95,6 +98,7 @@ class TranslateTask(QRunnable):
             except RuntimeError:
                 return
         except Exception as exc:
+            logger.error(f"Translation worker failed (request_id={self.request_id}): {exc}", exc_info=True)
             try:
                 self.signals.failed.emit(self.request_id, str(exc))
             except RuntimeError:
@@ -131,6 +135,7 @@ class BatchTranslateTask(QRunnable):
             except RuntimeError:
                 return
         except Exception as exc:
+            logger.error(f"Batch translation worker failed ({len(self.texts)} texts): {exc}", exc_info=True)
             try:
                 self.signals.failed.emit(str(exc))
             except RuntimeError:
@@ -184,6 +189,7 @@ class SubtitleGeneratorWorker(QRunnable):
             except RuntimeError:
                 return
         except Exception as exc:
+            logger.error(f"Subtitle generation worker failed for {self.video_path}: {exc}", exc_info=True)
             try:
                 self.signals.failed.emit(str(exc))
             except RuntimeError:
@@ -335,36 +341,37 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.console_capture = console_capture
         self.user_data = load_user_data()
         self.analytics_vocabulary = set(self.user_data.get("analytics", {}).get("vocabulary_seen", []))
-        self.analytics_vocabulary.update(load_snapshot())
-        print(f"[main] __init__: analytics_vocabulary seeded with {len(self.analytics_vocabulary)} words at startup")
+        snapshot_words = load_snapshot()
+        self.analytics_vocabulary.update(snapshot_words)
+        logger.info(f"Analytics vocabulary initialized with {len(self.analytics_vocabulary)} words ({len(snapshot_words)} from snapshot)")
 
-        # Print startup configuration
-        print("=" * 60)
-        print("LinguaLoop Workspace - Startup Configuration")
-        print("=" * 60)
-        print(f"Learning Language: {self.user_data['preferences']['learning_language']}")
-        print(f"Native Language: {self.user_data['preferences']['native_language']}")
-        print(f"Translation Mode: {self.user_data['preferences']['translation_mode']}")
-        print(f"Video Playback Speed: {self.user_data['preferences']['video_playback_speed']}x")
-        print(f"Recent Files: {len(self.user_data['recent_files'])} file(s)")
-        print(f"Total Cards Added: {self.user_data['analytics']['cards_added_total']}")
-        print(f"Vocabulary Seen: {len(self.user_data['analytics'].get('vocabulary_seen', []))} words")
-        print("-" * 60)
+        # Log startup configuration
+        logger.info("=" * 60)
+        logger.info("LinguaLoop Workspace - Application Startup")
+        logger.info("=" * 60)
+        logger.info(f"Learning Language: {self.user_data['preferences']['learning_language']}")
+        logger.info(f"Native Language: {self.user_data['preferences']['native_language']}")
+        logger.info(f"Translation Mode: {self.user_data['preferences']['translation_mode']}")
+        logger.info(f"Video Playback Speed: {self.user_data['preferences']['video_playback_speed']}x")
+        logger.info(f"Recent Files: {len(self.user_data['recent_files'])} file(s)")
+        logger.info(f"Total Cards Added: {self.user_data['analytics']['cards_added_total']}")
+        logger.info(f"Vocabulary Seen: {len(self.user_data['analytics'].get('vocabulary_seen', []))} words")
+        logger.info("-" * 60)
         last_session = self.user_data['last_session']
         if last_session.get('content_type'):
-            print(f"Last Session Type: {last_session['content_type']}")
+            logger.info(f"Last Session Type: {last_session['content_type']}")
             if last_session.get('pdf_path'):
-                print(f"  PDF: {last_session['pdf_path']}")
-                print(f"  Page: {last_session.get('page_index', 0) + 1}")
+                logger.info(f"  PDF: {last_session['pdf_path']}")
+                logger.info(f"  Page: {last_session.get('page_index', 0) + 1}")
             if last_session.get('video_path'):
-                print(f"  Video: {last_session['video_path']}")
-                print(f"  Position: {last_session.get('video_position_ms', 0) / 1000:.1f}s")
+                logger.info(f"  Video: {last_session['video_path']}")
+                logger.info(f"  Position: {last_session.get('video_position_ms', 0) / 1000:.1f}s")
                 if last_session.get('srt_path'):
-                    print(f"  Subtitles: {last_session['srt_path']}")
-                    print(f"  Subtitle Offset: {last_session.get('subtitle_offset_ms', 0)}ms")
+                    logger.info(f"  Subtitles: {last_session['srt_path']}")
+                    logger.info(f"  Subtitle Offset: {last_session.get('subtitle_offset_ms', 0)}ms")
         else:
-            print("Last Session: None (starting fresh)")
-        print("=" * 60)
+            logger.info("Last Session: None (starting fresh)")
+        logger.info("=" * 60)
 
         # Mode management
         self.mode_manager = ModeManager()
@@ -698,6 +705,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         """
         Internal mode change handler - SINGLE PLACE for mode changes.
         """
+        logger.info(f"Mode changed to {mode}")
         # Update workspace stack
         if mode == WorkspaceMode.WELCOME:
             self.workspace_stack.setCurrentWidget(self.welcome_page)
@@ -711,7 +719,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         # Update keyboard shortcuts
         self.shortcut_manager.update_for_mode(mode)
-        print(f"[MODE] Changed to {mode}, shortcuts updated")
+        logger.debug(f"Keyboard shortcuts updated for mode {mode}")
 
     def _on_mode_transition_failed(self, mode_name: str, reason: str):
         """Handle failed mode transition."""
@@ -1123,20 +1131,28 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             return False
 
     def _determine_translation_mode(self):
+        logger.debug("Determining available translation mode")
         # Check availability without creating new instances unnecessarily
         if self._check_internet_connection():
             # Use cached online backend if available, otherwise create temporary one for check
             online_backend = self._online_backend if self._online_backend is not None else OnlineTranslationBackend()
             if online_backend.is_available():
                 if self.translation_mode != "offline":
+                    logger.info("Online translation backend available, using online mode")
                     self.translation_mode = "online"
+                else:
+                    logger.debug("Online backend available but staying in offline mode")
                 self._update_translation_status_label()
                 return
 
         # Fall back to offline mode if available
+        logger.debug("Online backend unavailable, checking offline backend")
         offline_backend = self._offline_backend if self._offline_backend is not None else MarianMTTranslationBackend()
         if offline_backend.is_available():
+            logger.info("Using offline translation mode")
             self.translation_mode = "offline"
+        else:
+            logger.warning("No translation backend available (online and offline both unavailable)")
         self._update_translation_status_label()
 
     def _update_translation_status_label(self):
@@ -1155,19 +1171,24 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         save_user_data(self.user_data)
 
     def _toggle_translation_mode(self):
+        logger.info(f"Toggling translation mode from {self.translation_mode}")
         if self.translation_mode == "online":
             # Check offline availability
             offline_backend = self._offline_backend if self._offline_backend is not None else MarianMTTranslationBackend()
             if not offline_backend.is_available():
+                logger.warning("Cannot switch to offline mode: backend not available")
                 self._set_status("Offline translation backend is not installed.")
                 return
+            logger.info("Switched to offline translation mode")
             self.translation_mode = "offline"
         else:
             # Check online availability
             online_backend = self._online_backend if self._online_backend is not None else OnlineTranslationBackend()
             if not online_backend.is_available():
+                logger.warning("Cannot switch to online mode: backend not available")
                 self._set_status("Online translation backend is not installed.")
                 return
+            logger.info("Switched to online translation mode")
             self.translation_mode = "online"
         self._update_translation_status_label()
 
@@ -1228,8 +1249,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         key = self._translation_cache_key(text)
         if key in self.translation_cache:
             if visible:
+                logger.debug(f"Translation cache hit for text: {text[:50]}...")
                 self._cache_hits += 1
-                print(f"[translation] CACHE HIT: '{text[:30]}...' (hits: {self._cache_hits}, misses: {self._cache_misses})")
                 self.selection.translation = self.translation_cache[key]
                 self._update_selection_panel()
                 self._update_action_buttons()
@@ -1237,6 +1258,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         existing_request_id = self._translation_requests_by_key.get(key)
         if existing_request_id is not None:
+            logger.debug(f"Translation already in progress (request_id={existing_request_id})")
             if visible:
                 self.current_request_id = existing_request_id
                 request = self._translation_requests.get(existing_request_id)
@@ -1250,14 +1272,15 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._next_translation_request_id += 1
         request_id = self._next_translation_request_id
         if visible:
+            logger.debug(f"Translation cache miss, starting new request")
             self._cache_misses += 1
-            print(f"[translation] CACHE MISS: '{text[:30]}...' (hits: {self._cache_hits}, misses: {self._cache_misses})")
             self.current_request_id = request_id
             self.selection.translation = "translating..."
             self._update_selection_panel()
             self._update_action_buttons()
         backend = self._get_translation_backend()
         src_lang, dest_lang = self._get_translation_language_codes()
+        logger.info(f"Starting translation request {request_id} (backend={self.translation_mode}, {src_lang}->{dest_lang}, visible={visible}): {text[:100]}...")
         task = TranslateTask(request_id, text, src_lang, dest_lang, backend)
         self._translation_requests[request_id] = {
             "key": key,
@@ -1333,24 +1356,31 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             yield cleaned
 
     def _on_translation_done(self, request_id, source_text, translated_text):
+        logger.info(f"Translation completed (request_id={request_id}): {source_text[:50]}... -> {translated_text[:50]}...")
         request = self._translation_requests.pop(request_id, None)
         if request is None:
+            logger.debug(f"Translation request {request_id} not found (may have been cancelled)")
             return
         key = request["key"]
         if self._translation_requests_by_key.get(key) == request_id:
             self._translation_requests_by_key.pop(key, None)
         if request["context_version"] != self._translation_context_version:
+            logger.debug(f"Translation request {request_id} context stale, discarding")
             return
         self.translation_cache[key] = translated_text
+        logger.debug(f"Cached translation (cache size={len(self.translation_cache)})")
         if not request["visible"] or request_id != self.current_request_id:
+            logger.debug(f"Translation request {request_id} not visible or not current, skipping UI update")
             return
         self.selection.translation = translated_text
         self._update_selection_panel()
         self._update_action_buttons()
 
     def _on_translation_failed(self, request_id, error_message):
+        logger.error(f"Translation failed (request_id={request_id}): {error_message}")
         request = self._translation_requests.pop(request_id, None)
         if request is None:
+            logger.debug(f"Translation request {request_id} not found")
             return
         key = request["key"]
         if self._translation_requests_by_key.get(key) == request_id:
@@ -1360,6 +1390,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             or not request["visible"]
             or request_id != self.current_request_id
         ):
+            logger.debug(f"Translation request {request_id} stale or not visible, skipping error display")
             return
         self.selection.translation = f"Translation error: {error_message}"
         self._update_selection_panel()
@@ -1369,7 +1400,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
     def _on_batch_translation_done(self, texts, translations):
         """Handle completion of batch translation for prefetching."""
         if len(texts) != len(translations):
-            print(f"[translation] Batch translation error: text count ({len(texts)}) != translation count ({len(translations)})")
+            logger.error(f"Batch translation count mismatch: {len(texts)} texts vs {len(translations)} translations")
             return
 
         # Cache all the translations
@@ -1377,11 +1408,26 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             key = self._translation_cache_key(text)
             self.translation_cache[key] = translation
 
-        print(f"[translation] Batch prefetch completed: {len(texts)} words cached")
+        # Determine location based on mode
+        if self.mode_manager.current_mode == WorkspaceMode.PDF:
+            location_info = f"page {self.current_page_index + 1}"
+        elif self.mode_manager.current_mode == WorkspaceMode.VIDEO:
+            if hasattr(self, 'current_subtitle') and self.current_subtitle:
+                location_info = f"line {self.current_subtitle.index}"
+            else:
+                location_info = "line ?"
+        else:
+            location_info = "unknown location"
+
+        # Create word sample (first 5 words)
+        sample_size = min(5, len(texts))
+        word_sample = ", ".join(texts[:sample_size])
+
+        logger.info(f"Batch translation completed: {len(texts)} words on {location_info}: {word_sample}")
 
     def _on_batch_translation_failed(self, error_message):
         """Handle batch translation failure - log but don't show to user since it's background."""
-        print(f"[translation] Batch prefetch failed: {error_message}")
+        logger.warning(f"Batch translation prefetch failed: {error_message}")
 
     def _translate_word_field_input(self):
         text = self.word_value.text().strip()
@@ -1572,6 +1618,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
     def _refresh_anki_status(self):
         self.anki_check_request_id += 1
         request_id = self.anki_check_request_id
+        logger.info(f"Checking Anki connection status (request_id={request_id})")
         self.anki_status_label.setText("Anki: checking...")
         task = AnkiStatusTask(request_id)
         task.signals.finished.connect(self._on_anki_status_checked)
@@ -1579,9 +1626,10 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _on_anki_status_checked(self, request_id, connected, words):
         if request_id != self.anki_check_request_id:
-            print(f"[main] _on_anki_status_checked: stale request {request_id} (current={self.anki_check_request_id}), ignoring")
+            logger.debug(f"Anki status check stale (request_id={request_id}, current={self.anki_check_request_id}), ignoring")
             return
-        print(f"[main] _on_anki_status_checked: connected={connected}, words={'None' if words is None else len(words)}")
+        vocab_count = len(words) if words is not None else 0
+        logger.info(f"Anki status checked (request_id={request_id}): connected={connected}, vocabulary_count={vocab_count}")
         self.is_anki_connected = connected
         self.anki_status_label.setText("Anki: connected" if connected else "Anki: not connected")
         self.health_label.setText(
@@ -1590,7 +1638,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         if words is not None:
             save_snapshot(words)
             self.analytics_vocabulary.update(words)
-            print(f"[main] analytics_vocabulary now has {len(self.analytics_vocabulary)} words total")
+            logger.debug(f"Updated analytics vocabulary: {len(self.analytics_vocabulary)} words total")
             self._refresh_word_highlights()
 
     def _refresh_word_highlights(self):
@@ -1601,11 +1649,15 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _start_anki(self):
         if not os.path.exists(ANKI_PATH):
+            logger.warning(f"Anki executable not found at {ANKI_PATH}")
             QMessageBox.warning(self, "Anki Not Found", f"Anki executable not found at:\n{ANKI_PATH}")
             return
         try:
+            logger.info(f"Starting Anki process: {ANKI_PATH}")
             self.anki_process = subprocess.Popen([ANKI_PATH], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            logger.info(f"Anki process started successfully (PID: {self.anki_process.pid})")
         except Exception as exc:
+            logger.error(f"Failed to start Anki: {exc}", exc_info=True)
             QMessageBox.critical(self, "Start Anki Failed", str(exc))
             return
         self._set_status("Anki started. Checking connection...")
@@ -1621,9 +1673,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _record_successful_card_add(self, word_text):
         analytics = self.user_data["analytics"]
-        analytics["cards_added_total"] = int(analytics.get("cards_added_total") or 0) + 1
+        old_total = int(analytics.get("cards_added_total") or 0)
+        analytics["cards_added_total"] = old_total + 1
         self.analytics_vocabulary.update(token.lower() for token in re.findall(r"\b\w+\b", word_text, flags=re.UNICODE))
         analytics["vocabulary_seen"] = sorted(self.analytics_vocabulary)
+        logger.info(f"Recorded card add for '{word_text}' (total cards: {analytics['cards_added_total']}, vocabulary: {len(self.analytics_vocabulary)} words)")
         save_user_data(self.user_data)
 
         # Update UI to reflect new vocabulary state
@@ -1632,6 +1686,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         # Re-render PDF to update word highlighting
         if self.doc and self.mode_manager.current_mode == WorkspaceMode.PDF:
+            logger.debug("Re-rendering PDF to update word highlighting")
             self._render_current_page()
 
     def _queue_payload(self):
@@ -1648,57 +1703,74 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _queue_current_selection_for_later(self, reason: str):
         payload = self._queue_payload()
+        logger.info(f"Queueing card for later (reason: {reason}): word='{payload['word']}', sentence='{payload['sentence'][:50]}...'")
         append_queue_entry(payload)
         self._refresh_queue_summary()
         self._show_card_feedback("Queued for later", payload["sentence"], "queued", reason=reason)
 
     def _add_now(self):
         if not self.selection.word or not self.selection.translation:
+            logger.debug("Skipping card add: no word or translation selected")
             return
+        logger.info(f"Adding card now: word='{self.selection.word}', translation='{self.selection.translation}', anki_connected={self.is_anki_connected}")
         if not self.is_anki_connected:
+            logger.warning("Anki not connected, queueing card instead")
             try:
                 self._queue_current_selection_for_later("AnkiConnect is not available")
             except Exception as exc:
+                logger.error(f"Failed to queue card: {exc}", exc_info=True)
                 QMessageBox.critical(self, "Queue Write Failed", str(exc))
             return
         try:
             note_sentence = self._build_note_sentence()
             note_id = add_anki_card(note_sentence, self.selection.word, self.selection.translation)
+            logger.info(f"Successfully added card to Anki (note_id={note_id}): '{note_sentence}'")
             self._record_successful_card_add(self.selection.word)
             self._show_card_feedback("Added to Anki", note_sentence, "added", note_id=note_id)
             self._close_popover()
         except Exception as exc:
             if isinstance(exc, ConnectionError):
+                logger.error(f"Anki connection error during card add: {exc}", exc_info=True)
                 try:
                     self._queue_current_selection_for_later(str(exc))
                 except Exception as queue_exc:
+                    logger.error(f"Failed to queue card after connection error: {queue_exc}", exc_info=True)
                     QMessageBox.critical(self, "Queue Write Failed", str(queue_exc))
                 return
+            logger.error(f"Failed to add card to Anki: {exc}", exc_info=True)
             QMessageBox.critical(self, "Anki Add Failed", str(exc))
 
     def _add_to_queue(self):
         if not self.selection.word or not self.selection.translation:
+            logger.debug("Skipping queue add: no word or translation selected")
             return
         try:
             payload = self._queue_payload()
+            logger.info(f"Adding to queue: word='{payload['word']}', sentence='{payload['sentence'][:50]}...'")
             append_queue_entry(payload)
             self._refresh_queue_summary()
             self._show_card_feedback("Saved to queue", payload["sentence"], "queued")
         except Exception as exc:
+            logger.error(f"Failed to add card to queue: {exc}", exc_info=True)
             QMessageBox.critical(self, "Queue Write Failed", str(exc))
 
     def _process_queue(self):
         entries = load_queue_entries()
+        queue_size = len(entries)
+        logger.info(f"Processing queue with {queue_size} entries")
         if not entries:
+            logger.debug("Queue is empty")
             QMessageBox.information(self, "Queue Empty", "No queued cards found.")
             return
         if not self.is_anki_connected:
+            logger.warning("Cannot process queue: Anki not connected")
             QMessageBox.warning(self, "Anki Not Connected", "AnkiConnect is not available.")
             return
 
         successful_entries = []
         failed_entries = []
-        for entry in entries:
+        for i, entry in enumerate(entries, 1):
+            logger.debug(f"Processing queue entry {i}/{queue_size}: word='{entry.get('word')}'")
             sentence = entry["sentence"]
             if sentence in self.sentence_counts:
                 self.sentence_counts[sentence] += 1
@@ -1710,13 +1782,15 @@ class UnifiedSentenceMinerWindow(QMainWindow):
                 add_anki_card(sentence_for_note, entry["word"], entry["translation"])
                 successful_entries.append(entry)
                 self._record_successful_card_add(entry["word"])
-            except Exception:
+            except Exception as exc:
+                logger.error(f"Failed to add queued card '{entry.get('word')}': {exc}", exc_info=True)
                 failed_entries.append(entry)
 
         if successful_entries:
             append_processed_log(successful_entries)
         save_queue_entries(failed_entries)
         self._refresh_queue_summary()
+        logger.info(f"Queue processing complete: {len(successful_entries)} added, {len(failed_entries)} failed")
         QMessageBox.information(
             self,
             "Queue Processed",
@@ -1755,9 +1829,12 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.mode_manager.set_mode(WorkspaceMode.WELCOME, force=True)
 
     def _load_pdf(self, path, initial_page_index=0):
+        logger.info(f"Loading PDF: {path}")
         try:
             self.doc = fitz.open(path)
+            logger.info(f"PDF opened successfully: {Path(path).name} ({self.doc.page_count} pages)")
         except Exception as exc:
+            logger.error(f"Failed to open PDF '{path}': {exc}", exc_info=True)
             QMessageBox.critical(self, "PDF Error", f"Failed to open PDF:\n{exc}")
             return
 
@@ -1765,6 +1842,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.current_page_index = max(0, min(initial_page_index, self.doc.page_count - 1))
         self.current_source_name = Path(path).name
         self.current_source_location = f"Page {self.current_page_index + 1}"
+        logger.debug(f"PDF page set to {self.current_page_index + 1}/{self.doc.page_count}")
         self._clear_selection_state()
         QTimer.singleShot(0, self._fit_width)
         self._update_source_summary()
@@ -2001,14 +2079,20 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _load_video(self, path, restore_position_ms=0):
         """Load video with validation and error handling."""
+        logger.info(f"Loading video: {path} (restore_position={restore_position_ms}ms)")
+
         # Validate file exists
         video_path = Path(path)
         if not video_path.exists():
+            logger.error(f"Video file not found: {path}")
             QMessageBox.critical(self, "File Not Found", f"Video file does not exist:\n{path}")
             return
 
         # Validate file size (detect empty/corrupt files)
-        if video_path.stat().st_size < 1024:  # Less than 1KB
+        file_size = video_path.stat().st_size
+        logger.debug(f"Video file size: {file_size} bytes")
+        if file_size < 1024:  # Less than 1KB
+            logger.warning(f"Video file too small ({file_size} bytes), may be corrupted: {path}")
             QMessageBox.warning(
                 self,
                 "Invalid File",
@@ -2022,12 +2106,15 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.current_source_location = "00:00"
         self.media_player.setSource(QUrl.fromLocalFile(path))
         if restore_position_ms > 0:
+            logger.debug(f"Scheduling position restoration to {restore_position_ms}ms")
             QTimer.singleShot(400, lambda: self.media_player.setPosition(restore_position_ms))
 
         auto_srt = find_best_srt_for_video(path)
         if auto_srt:
+            logger.info(f"Auto-detected subtitle file: {auto_srt}")
             self._load_subtitles(auto_srt)
         else:
+            logger.debug("No subtitle file auto-detected")
             self.subtitle_parser = None
             self.current_srt_path = ""
             self.subtitle_label.set_subtitle(None)
@@ -2059,12 +2146,16 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         save_user_data(self.user_data)
 
     def _load_subtitles(self, srt_path):
+        logger.info(f"Loading subtitles: {srt_path}")
         try:
             self.subtitle_parser = SRTParser.from_file(srt_path)
+            entry_count = len(self.subtitle_parser.entries) if self.subtitle_parser else 0
+            logger.info(f"Loaded {entry_count} subtitle entries from {Path(srt_path).name}")
             self.current_srt_path = srt_path
             self._persist_session()
             self._set_status(f"Loaded subtitles: {Path(srt_path).name}")
         except Exception as exc:
+            logger.error(f"Failed to load subtitles from {srt_path}: {exc}", exc_info=True)
             QMessageBox.critical(self, "Subtitle Error", f"Failed to parse subtitles:\n{exc}")
 
     def _generate_subtitles_interactive(self):
@@ -2204,7 +2295,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             return
 
         # Log technical details
-        print(f"[VIDEO ERROR] {error}: {error_string} | File: {self.current_video_path}")
+        logger.error(f"Media player error: {error}, error_string='{error_string}', file='{self.current_video_path}'")
 
         # Map to user-friendly messages
         error_messages = {
@@ -2231,10 +2322,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         """Monitor media loading status and detect issues early."""
         from PySide6.QtMultimedia import QMediaPlayer
 
-        print(f"[VIDEO STATUS] Media status: {status}")
+        logger.debug(f"Media status changed: {status}")
 
         if status == QMediaPlayer.MediaStatus.InvalidMedia:
             file_name = Path(self.current_video_path).name if self.current_video_path else "Unknown"
+            logger.error(f"Invalid media detected: {self.current_video_path}")
             QMessageBox.warning(
                 self,
                 "Invalid Video",
@@ -2271,17 +2363,22 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _persist_session(self):
         session = self.user_data["last_session"]
+        mode_string = self.mode_manager.mode_string()
+        video_pos = int(self.media_player.position() if self.media_player else 0)
+
         session.update(
             {
-                "content_type": self.mode_manager.mode_string(),
+                "content_type": mode_string,
                 "pdf_path": self.current_pdf_path,
                 "page_index": int(self.current_page_index),
                 "video_path": self.current_video_path,
-                "video_position_ms": int(self.media_player.position() if self.media_player else 0),
+                "video_position_ms": video_pos,
                 "srt_path": self.current_srt_path,
                 "subtitle_offset_ms": int(self.subtitle_offset_ms),
             }
         )
+
+        logger.debug(f"Persisting session: mode={mode_string}, pdf={self.current_pdf_path or 'none'}, page={self.current_page_index}, video={self.current_video_path or 'none'}, position={video_pos}ms")
 
         # Update workspace view based on mode
         mode = self.mode_manager.current_mode
@@ -2317,20 +2414,28 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         pdf_path = str(session.get("pdf_path") or "")
         video_path = str(session.get("video_path") or "")
 
+        logger.info(f"Restoring session: content_type={content_type}, pdf={pdf_path or 'none'}, video={video_path or 'none'}")
+
         def _try_video():
             if video_path and Path(video_path).exists():
+                logger.info(f"Restoring video session: {video_path}")
                 self.subtitle_offset_ms = int(session.get("subtitle_offset_ms") or 0)
                 self._load_video(video_path, restore_position_ms=int(session.get("video_position_ms") or 0))
                 srt_path = str(session.get("srt_path") or "")
                 if srt_path and Path(srt_path).exists():
                     self._load_subtitles(srt_path)
                 return True
+            elif video_path:
+                logger.warning(f"Video from last session not found: {video_path}")
             return False
 
         def _try_pdf():
             if pdf_path and Path(pdf_path).exists():
+                logger.info(f"Restoring PDF session: {pdf_path}")
                 self._load_pdf(pdf_path, initial_page_index=int(session.get("page_index") or 0))
                 return True
+            elif pdf_path:
+                logger.warning(f"PDF from last session not found: {pdf_path}")
             return False
 
         if content_type == "pdf":
@@ -2340,6 +2445,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             if _try_video() or _try_pdf():
                 return
 
+        logger.debug("No valid session to restore")
         if content_type in ("pdf", "video"):
             self.command_bar.set_mode(content_type)
 

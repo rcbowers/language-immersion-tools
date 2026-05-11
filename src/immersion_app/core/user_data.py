@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 from .language_config import DEFAULT_LEARNING_LANGUAGE, DEFAULT_NATIVE_LANGUAGE, normalize_language_code
 from .paths import LEGACY_USER_STATE_PATH, USER_STATE_PATH, ensure_runtime_dirs
@@ -40,17 +43,27 @@ def default_user_data():
 
 def load_user_data():
     payload = default_user_data()
+    loaded_from = None
     for path in (USER_STATE_PATH, LEGACY_USER_STATE_PATH):
         if not path.exists():
             continue
         try:
+            logger.debug(f"Loading user data from {path}")
             loaded = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to load user data from {path}: {e}")
             continue
         if not isinstance(loaded, dict):
+            logger.warning(f"Invalid user data format in {path}, expected dict")
             continue
         payload.update(loaded)
+        loaded_from = path
         break
+
+    if loaded_from:
+        logger.info(f"User data loaded from {loaded_from}")
+    else:
+        logger.info("No existing user data found, using defaults")
 
     preferences = payload.get("preferences") or {}
     payload["preferences"] = {
@@ -67,11 +80,29 @@ def load_user_data():
     payload["last_session"] = payload.get("last_session") or default_user_data()["last_session"]
     payload["workspace"] = payload.get("workspace") or {"current_view": "welcome"}
     payload["recent_files"] = payload.get("recent_files") or []
+
+    # Log key configuration
+    logger.info(
+        f"Configuration: learning={payload['preferences']['learning_language']}, "
+        f"native={payload['preferences']['native_language']}, "
+        f"translation_mode={payload['preferences']['translation_mode']}"
+    )
+    logger.debug(
+        f"Analytics: cards_added={payload['analytics']['cards_added_total']}, "
+        f"vocabulary_count={len(payload['analytics']['vocabulary_seen'])}"
+    )
+
     return payload
 
 
 def save_user_data(payload):
     ensure_runtime_dirs()
+    logger.info(f"Saving user data to {USER_STATE_PATH}")
+    logger.debug(
+        f"Save summary: cards_added={payload.get('analytics', {}).get('cards_added_total', 0)}, "
+        f"vocabulary_count={len(payload.get('analytics', {}).get('vocabulary_seen', []))}"
+    )
     temp_path = USER_STATE_PATH.with_suffix(".tmp")
     temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(temp_path, USER_STATE_PATH)
+    logger.debug("User data saved successfully")

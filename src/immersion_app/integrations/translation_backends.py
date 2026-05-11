@@ -7,9 +7,12 @@ Provides online (Google Translate) and offline (MarianMT) translation backends.
 import asyncio
 import gc
 import inspect
+import logging
 import threading
 from abc import ABC, abstractmethod
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class TranslationBackend(ABC):
@@ -74,22 +77,32 @@ class OnlineTranslationBackend(TranslationBackend):
 
     def translate(self, text: str, src_lang: str, dest_lang: str) -> str:
         """Translate using Google Translate API."""
+        logger.debug(f"OnlineTranslation request: '{text[:50]}...' [{src_lang} -> {dest_lang}]")
         try:
             from googletrans import Translator
         except ImportError:
+            logger.error("googletrans library not installed")
             raise RuntimeError("googletrans library not installed. Install with: pip install googletrans==4.0.0-rc1")
 
         # Handle async/sync variants of googletrans
         if self._is_async_variant():
             # For async variants, create a new translator each time (can't reuse due to context manager)
-            return asyncio.run(self._translate_async(text, src_lang, dest_lang))
+            result = asyncio.run(self._translate_async(text, src_lang, dest_lang))
+            logger.info(f"Online translation completed: '{text[:30]}...' -> '{result[:30]}...'")
+            return result
 
         # For sync variant, reuse the translator instance
         if self._translator is None:
             self._translator = Translator()
 
-        result = self._translator.translate(text, src=src_lang, dest=dest_lang)
-        return self._extract_translation_text(result)
+        try:
+            result = self._translator.translate(text, src=src_lang, dest=dest_lang)
+            translated = self._extract_translation_text(result)
+            logger.info(f"Online translation completed: '{text[:30]}...' -> '{translated[:30]}...'")
+            return translated
+        except Exception as e:
+            logger.error(f"Online translation failed for '{text[:30]}...': {e}", exc_info=True)
+            raise
 
     async def _translate_async(self, text: str, src_lang: str, dest_lang: str) -> str:
         """Async translation for googletrans async variants."""
@@ -124,14 +137,18 @@ class OnlineTranslationBackend(TranslationBackend):
         if not texts:
             return []
 
+        logger.debug(f"Online batch translation: {len(texts)} texts [{src_lang} -> {dest_lang}]")
         try:
             from googletrans import Translator
         except ImportError:
+            logger.error("googletrans library not installed")
             raise RuntimeError("googletrans library not installed. Install with: pip install googletrans==4.0.0-rc1")
 
         # Handle async/sync variants
         if self._is_async_variant():
-            return asyncio.run(self._translate_batch_async(texts, src_lang, dest_lang))
+            result = asyncio.run(self._translate_batch_async(texts, src_lang, dest_lang))
+            logger.debug(f"Online batch translation completed: {len(result)} translations")
+            return result
 
         # For sync variant, reuse the translator instance
         if self._translator is None:
@@ -145,10 +162,12 @@ class OnlineTranslationBackend(TranslationBackend):
             if not isinstance(results, list):
                 results = [results]
 
-            return [self._extract_translation_text(r) for r in results]
+            translations = [self._extract_translation_text(r) for r in results]
+            logger.debug(f"Online batch translation completed: {len(translations)} translations")
+            return translations
         except Exception as e:
             # Fallback: if batch fails, translate one by one
-            print(f"[translation] Batch translation failed, falling back to individual requests: {e}")
+            logger.warning(f"Online batch translation failed, falling back to individual requests: {e}")
             return [self.translate(text, src_lang, dest_lang) for text in texts]
 
     async def _translate_batch_async(self, texts: list[str], src_lang: str, dest_lang: str) -> list[str]:
@@ -177,7 +196,7 @@ class OnlineTranslationBackend(TranslationBackend):
                 return [self._extract_translation_text(r) for r in results]
         except Exception as e:
             # Fallback: if batch fails, translate one by one
-            print(f"[translation] Async batch translation failed, falling back to individual requests: {e}")
+            logger.warning(f"Online async batch translation failed, falling back to individual requests: {e}")
             return [await self._translate_async(text, src_lang, dest_lang) for text in texts]
 
     def _extract_translation_text(self, result):
@@ -341,18 +360,21 @@ class MarianMTTranslationBackend(TranslationBackend):
 
         # Fast path: model already loaded
         if pair_key in self._models:
+            logger.debug(f"MarianMT model cache HIT: {pair_key}")
             return self._models[pair_key]
 
         # Acquire global lock for model loading
         with self._global_lock:
             # Double-check after acquiring lock
             if pair_key in self._models:
+                logger.debug(f"MarianMT model cache HIT (after lock): {pair_key}")
                 return self._models[pair_key]
 
             try:
                 from transformers import MarianMTModel, MarianTokenizer
                 import torch
             except ImportError:
+                logger.error("transformers or torch not installed")
                 raise RuntimeError(
                     "transformers or torch not installed. Install with: "
                     "pip install transformers torch sentencepiece sacremoses"
@@ -362,7 +384,7 @@ class MarianMTTranslationBackend(TranslationBackend):
 
             try:
                 # Download and load model (auto-downloads to ~/.cache/huggingface/hub/)
-                print(f"[MarianMT] Loading model: {model_name}")
+                logger.info(f"Loading MarianMT model: {model_name} (device: {self._device})")
                 tokenizer = MarianTokenizer.from_pretrained(model_name)
                 model = MarianMTModel.from_pretrained(model_name)
 
@@ -376,10 +398,11 @@ class MarianMTTranslationBackend(TranslationBackend):
                 # Create per-model lock for inference
                 self._model_locks[pair_key] = threading.Lock()
 
-                print(f"[MarianMT] Model loaded successfully on {self._device}")
+                logger.info(f"MarianMT model loaded successfully: {model_name} on {self._device}")
                 return (tokenizer, model)
 
             except Exception as e:
+                logger.error(f"Failed to load MarianMT model {model_name}: {e}", exc_info=True)
                 raise RuntimeError(
                     f"Failed to load model {model_name}. "
                     f"Ensure internet connection for first download or try online mode. "
@@ -451,11 +474,15 @@ class MarianMTTranslationBackend(TranslationBackend):
         if not text or not text.strip():
             return ""
 
+        logger.debug(f"MarianMT translation: '{text[:50]}...' [{src_lang} -> {dest_lang}]")
         try:
             # Use batch translation with single item
             translations = self._translate_with_model([text], src_lang, dest_lang)
-            return translations[0] if translations else ""
+            result = translations[0] if translations else ""
+            logger.info(f"MarianMT translation completed: '{text[:30]}...' -> '{result[:30]}...'")
+            return result
         except Exception as e:
+            logger.error(f"MarianMT translation failed for '{text[:30]}...': {e}", exc_info=True)
             raise RuntimeError(f"MarianMT translation failed: {str(e)}")
 
     def translate_batch(self, texts: list[str], src_lang: str, dest_lang: str) -> list[str]:
@@ -474,11 +501,14 @@ class MarianMTTranslationBackend(TranslationBackend):
         if not texts:
             return []
 
+        logger.info(f"MarianMT batch translation: {len(texts)} texts [{src_lang} -> {dest_lang}]")
         try:
-            return self._translate_with_model(texts, src_lang, dest_lang)
+            result = self._translate_with_model(texts, src_lang, dest_lang)
+            logger.info(f"MarianMT batch translation completed: {len(result)} translations")
+            return result
         except Exception as e:
             # Fallback: if batch fails, translate one by one
-            print(f"[MarianMT] Batch translation failed, falling back to individual requests: {e}")
+            logger.warning(f"MarianMT batch translation failed, falling back to individual requests: {e}")
             return [self.translate(text, src_lang, dest_lang) for text in texts]
 
     def clear_model_cache(self):
@@ -491,6 +521,7 @@ class MarianMTTranslationBackend(TranslationBackend):
         except ImportError:
             return
 
+        logger.info(f"Clearing MarianMT model cache ({len(self._models)} models)")
         # Clear model references
         self._models.clear()
         self._model_locks.clear()
@@ -502,7 +533,7 @@ class MarianMTTranslationBackend(TranslationBackend):
         if self._device == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        print("[MarianMT] Model cache cleared")
+        logger.info("MarianMT model cache cleared")
 
     def is_available(self) -> bool:
         """Check if transformers and torch are installed."""

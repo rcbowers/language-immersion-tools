@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 from pathlib import Path
 
 import ffmpeg
 from yt_dlp import YoutubeDL
+
+from immersion_app.core.logging_config import setup_cli_logging
+
+logger = logging.getLogger(__name__)
 
 
 def is_youtube_url(input_string):
@@ -48,6 +53,8 @@ def extract_audio_from_local_file(video_path, output_dir):
 
 
 def main():
+    setup_cli_logging()
+    logger.info("Audio extraction tool starting")
     parser = argparse.ArgumentParser(description="Extract audio from YouTube videos or local video files as MP3")
     parser.add_argument("input", help="YouTube URL or path to local video file")
     parser.add_argument("-o", "--output-dir", default="audio_files")
@@ -55,15 +62,18 @@ def main():
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Output directory: {output_dir.resolve()}")
+    logger.info(f"Output directory: {output_dir.resolve()}")
     try:
         if is_youtube_url(args.input):
+            logger.info(f"Extracting audio from YouTube: {args.input}")
             extract_audio_from_youtube(args.input, output_dir)
         else:
+            logger.info(f"Extracting audio from local file: {args.input}")
             extract_audio_from_local_file(args.input, output_dir)
     except Exception as exc:
-        print(f"Error: {exc}")
+        logger.error(f"Audio extraction failed: {exc}", exc_info=True)
         return 1
+    logger.info("Audio extraction completed successfully")
     return 0
 
 

@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 import unicodedata
 from collections import Counter
 from pathlib import Path
 
+from immersion_app.core.logging_config import setup_cli_logging
+
 import matplotlib
+
+logger = logging.getLogger(__name__)
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -218,6 +223,8 @@ def save_full_word_list(word_freq, output_path):
 
 
 def main():
+    setup_cli_logging()
+    logger.info("Word frequency analysis tool starting")
     parser = argparse.ArgumentParser(description="Analyze document files (SRT, PDF, TXT) for word frequency.")
     parser.add_argument("path")
     parser.add_argument("--types", nargs="+", default=None)
@@ -227,13 +234,14 @@ def main():
     parser.add_argument("--save-full-list", action="store_true")
     args = parser.parse_args()
 
+    logger.info(f"Analyzing path: {args.path}, types: {args.types}, top: {args.top}")
     nlp = None
     if SPACY_AVAILABLE:
         try:
             nlp = spacy.load("es_core_news_sm")
-            print("Lemmatization enabled.")
+            logger.info("Lemmatization enabled with spaCy model 'es_core_news_sm'")
         except OSError:
-            print("spaCy model 'es_core_news_sm' not found. Lemmatization disabled.")
+            logger.warning("spaCy model 'es_core_news_sm' not found, lemmatization disabled")
 
     try:
         word_freq, stopwords_filtered, total_words, unique_words = analyze_documents(
@@ -245,13 +253,15 @@ def main():
         source_path = Path(args.path)
         source_filename = source_path.stem if source_path.is_file() else source_path.name
         output_path = args.output or f"./outputs/{source_filename}_word_analysis.png"
+        logger.info(f"Analysis complete: {total_words} total words, {unique_words} unique words")
         print_statistics(word_freq, args.top)
         create_histogram(word_freq, output_path, source_filename, total_words, unique_words, stopwords_filtered)
         if args.save_full_list:
             save_full_word_list(word_freq, f"./outputs/{source_filename}_full_list.txt")
     except Exception as exc:
-        print(f"Error: {exc}")
+        logger.error(f"Analysis failed: {exc}", exc_info=True)
         return 1
+    logger.info("Analysis completed successfully")
     return 0
 
 

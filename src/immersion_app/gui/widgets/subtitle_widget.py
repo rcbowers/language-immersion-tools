@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Clickable subtitle overlay widget."""
 
+import logging
+
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QTextCharFormat, QTextLayout, QTextOption
 from PySide6.QtWidgets import QLabel
 
 from immersion_app.gui.theme import Theme
+
+logger = logging.getLogger(__name__)
 
 """
 COORDINATE SYSTEM OVERVIEW:
@@ -340,13 +344,13 @@ class ClickableSubtitleLabel(QLabel):
             for rect in rects:
                 # Word rects should be within widget bounds (with small tolerance for rounding)
                 if not widget_rect.adjusted(-1, -1, 1, 1).contains(rect):
-                    print(f"Warning: Word {word_index} rect {rect} outside widget bounds {widget_rect}")
+                    logger.warning(f"Word {word_index} rect {rect} outside widget bounds {widget_rect}")
                     return False
 
                 # Word rects should generally be within or near content rect
                 # (may slightly exceed due to text overflow)
                 if not content_rect.adjusted(-50, -5, 50, 5).contains(rect.center()):
-                    print(f"Warning: Word {word_index} rect center far from content rect")
+                    logger.debug(f"Word {word_index} rect center far from content rect")
                     # Don't return False - this is just suspicious, not necessarily wrong
 
         return True
