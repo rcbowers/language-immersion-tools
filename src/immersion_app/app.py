@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFontDatabase
 
+from immersion_app.core.logging_config import setup_logging
 from immersion_app.gui.main_window import UnifiedSentenceMinerWindow
 
 
@@ -84,6 +85,9 @@ def main():
     app = QApplication(sys.argv)
     console_capture = ConsoleCapture()
     console_capture.install()
+
+    # Setup logging system with dual output (file + UI console)
+    log_file = setup_logging(console_capture)
 
     # Load Inter font family
     font_dir = Path(__file__).parent / "gui" / "fonts"

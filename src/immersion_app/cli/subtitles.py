@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 from pathlib import Path
+
+from immersion_app.core.logging_config import setup_cli_logging
+
+logger = logging.getLogger(__name__)
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"}
@@ -171,18 +176,21 @@ def parse_args():
 
 
 def main():
+    setup_cli_logging()
+    logger.info("Subtitle generation tool starting")
     args = parse_args()
+    logger.info(f"Mode: {args.mode}, Model: {args.model}, Language: {args.language}")
     device = choose_device(args.gpu)
     model = load_model(args.model, device)
     try:
         failures, total = youtube_mode(args, model, device) if args.mode == "youtube" else folder_mode(args, model, device)
     except KeyboardInterrupt:
-        print("\nInterrupted by user.")
+        logger.warning("Interrupted by user")
         return 1
     except Exception as exc:
-        print(f"Fatal error: {exc}")
+        logger.error(f"Fatal error: {exc}", exc_info=True)
         return 1
-    print(f"Completed {total - failures}/{total} items.")
+    logger.info(f"Completed {total - failures}/{total} items")
     return 1 if failures == total else 0
 
 
