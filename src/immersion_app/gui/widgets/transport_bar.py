@@ -170,6 +170,12 @@ class TransportBar(QWidget):
         self.speed_combo.currentTextChanged.connect(self._on_speed_changed)
         layout.addWidget(self.speed_combo)
 
+        # Usage tracking indicator
+        self.usage_tracking_label = QLabel("○")
+        self.usage_tracking_label.setToolTip("Usage tracking: Idle")
+        self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(active=False))
+        layout.addWidget(self.usage_tracking_label)
+
         # CC toggle (for future dual-language feature)
         self.cc_button = QPushButton("CC")
         self.cc_button.setFixedSize(32, 24)
@@ -370,6 +376,9 @@ class TransportBar(QWidget):
                 background-color: rgba(255, 255, 255, 0.2);
             }}
         """)
+        # Usage tracking indicator gets its own style
+        is_active = self.usage_tracking_label.text() == "●"
+        self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(is_active))
         self.volume_slider.setStyleSheet(f"""
             QSlider::groove:horizontal {{
                 background: rgba(255, 255, 255, 0.2);
@@ -389,6 +398,31 @@ class TransportBar(QWidget):
             }}
         """)
         self.volume_slider.blockSignals(False)
+
+    def _get_usage_tracking_style(self, active: bool) -> str:
+        """Get style for usage tracking indicator."""
+        color = "#4CAF50" if active else "rgba(255, 255, 255, 0.4)"  # Green when active, dim when idle
+        return f"""
+            QLabel {{
+                color: {color};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 14px;
+                font-weight: {Theme.FONT_WEIGHT_BOLD};
+                padding: 2px 6px;
+                border-radius: 4px;
+                background-color: transparent;
+            }}
+        """
+
+    def set_usage_tracking_active(self, active: bool):
+        """Update usage tracking indicator."""
+        if active:
+            self.usage_tracking_label.setText("●")
+            self.usage_tracking_label.setToolTip("Usage tracking: Active (recording time)")
+        else:
+            self.usage_tracking_label.setText("○")
+            self.usage_tracking_label.setToolTip("Usage tracking: Idle")
+        self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(active))
 
     @staticmethod
     def _format_time(ms: int) -> str:

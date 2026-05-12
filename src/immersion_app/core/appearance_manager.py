@@ -36,6 +36,11 @@ class AppearanceManager(QObject):
     def mode_string(self) -> str:
         return self._current_mode.value
 
+    def toggle_mode(self) -> None:
+        """Toggle between light and dark modes."""
+        new_mode = AppearanceMode.DARK if self._current_mode == AppearanceMode.LIGHT else AppearanceMode.LIGHT
+        self.set_mode(new_mode)
+
     @staticmethod
     def normalize_mode(mode: str | AppearanceMode | None) -> AppearanceMode:
         if isinstance(mode, AppearanceMode):

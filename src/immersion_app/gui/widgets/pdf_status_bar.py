@@ -106,6 +106,11 @@ class PDFStatusBar(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(8)
 
+        self.usage_tracking_label = QLabel("○")
+        self.usage_tracking_label.setToolTip("Usage tracking: Idle")
+        self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(active=False))
+        right_layout.addWidget(self.usage_tracking_label, alignment=Qt.AlignmentFlag.AlignVCenter)
+
         self.translation_mode_label = QLabel("Translation: Offline")
         self.translation_mode_label.setStyleSheet(self._get_badge_style())
         right_layout.addWidget(self.translation_mode_label, alignment=Qt.AlignmentFlag.AlignVCenter)
@@ -196,6 +201,21 @@ class PDFStatusBar(QWidget):
             }}
         """
 
+    def _get_usage_tracking_style(self, active: bool) -> str:
+        """Get style for usage tracking indicator."""
+        color = "#4CAF50" if active else Theme.TEXT_MUTED  # Green when active, muted when idle
+        return f"""
+            QLabel {{
+                color: {color};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 14px;
+                font-weight: {Theme.FONT_WEIGHT_BOLD};
+                padding: 2px 6px;
+                border-radius: 4px;
+                background-color: transparent;
+            }}
+        """
+
     def _get_zoom_button_style(self) -> str:
         return f"""
             QPushButton {{
@@ -245,6 +265,9 @@ class PDFStatusBar(QWidget):
         """)
         self.translation_mode_label.setStyleSheet(self._get_badge_style())
         self.anki_status_label.setStyleSheet(self._get_badge_style())
+        # Usage tracking indicator gets its own style
+        is_active = self.usage_tracking_label.text() == "●"
+        self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(is_active))
         self.zoom_label.setStyleSheet(f"""
             QLabel {{
                 color: {Theme.TEXT_SOFT};
@@ -298,3 +321,13 @@ class PDFStatusBar(QWidget):
 
         self.anki_status_label.setText("Anki: Not connected")
         self.anki_status_label.set_clickable(True)
+
+    def set_usage_tracking_active(self, active: bool):
+        """Update usage tracking indicator."""
+        if active:
+            self.usage_tracking_label.setText("●")
+            self.usage_tracking_label.setToolTip("Usage tracking: Active (recording time)")
+        else:
+            self.usage_tracking_label.setText("○")
+            self.usage_tracking_label.setToolTip("Usage tracking: Idle")
+        self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(active))

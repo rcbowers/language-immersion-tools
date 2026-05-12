@@ -102,6 +102,11 @@ class Theme:
     CHAPTER_RAIL_WIDTH = 48
     POPOVER_WIDTH = 320
 
+    # Shortcut Panel
+    SHORTCUT_PANEL_WIDTH_PERCENT = 0.10  # 10% of window width
+    SHORTCUT_PANEL_HEIGHT_PERCENT = 0.20  # 20% of window height
+    SHORTCUT_PANEL_MARGIN = 16  # Margin from edges
+
     @classmethod
     def apply_mode(cls, mode: str) -> None:
         """Activate the requested palette."""
@@ -249,6 +254,33 @@ class Theme:
             """
 
         return ""
+
+    @staticmethod
+    def get_checkbox_style() -> str:
+        """Styled checkbox for completion tracking."""
+        return f"""
+            QCheckBox {{
+                color: {Theme.TEXT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 13px;
+                font-weight: {Theme.FONT_WEIGHT_MEDIUM};
+                spacing: 8px;
+            }}
+            QCheckBox::indicator {{
+                width: 20px;
+                height: 20px;
+                border: 2px solid {Theme.BORDER_STRONG};
+                border-radius: 4px;
+                background-color: {Theme.SURFACE_ALT};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {Theme.ACCENT};
+                border-color: {Theme.ACCENT};
+            }}
+            QCheckBox::indicator:hover {{
+                border-color: {Theme.ACCENT};
+            }}
+        """
 
     @staticmethod
     def get_menu_style() -> str:

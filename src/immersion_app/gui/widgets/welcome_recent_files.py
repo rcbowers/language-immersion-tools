@@ -108,7 +108,8 @@ class WelcomeRecentFilesList(QWidget):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll_area.setMaximumHeight(400)
+        self.scroll_area.setMinimumHeight(150)
+        self.scroll_area.setMaximumHeight(350)
 
         # Container for list items
         self.list_container = QWidget()
