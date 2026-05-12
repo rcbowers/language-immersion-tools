@@ -25,7 +25,7 @@ The codebase is organized into **four strict layers** with explicit dependency r
 
 **Contains:**
 - State managers (`mode.py`, `selection_state.py`)
-- Domain services (future: `translation_service.py`, `anki_service.py`)
+- Domain services (`translation_service.py`, `anki_service.py`, `pdf_service.py`, `video_service.py`)
 - Data models and domain logic
 
 **Rules:**
@@ -41,7 +41,7 @@ The codebase is organized into **four strict layers** with explicit dependency r
 **Contains:**
 - Widgets (`src/immersion_app/gui/widgets/`)
 - Windows (`main_window.py`)
-- Controllers (`src/immersion_app/gui/controllers/` - to be created)
+- Controllers (`src/immersion_app/gui/controllers/`)
 - Theme system (`theme.py`)
 
 **Rules:**
@@ -100,12 +100,14 @@ Media ────────┘
 
 Current state managers:
 - **`ModeManager`** (`src/immersion_app/core/mode.py`) - Owns workspace mode (WELCOME/PDF/VIDEO)
-- **`SelectionState`** (`src/immersion_app/core/selection_state.py`) - Owns current word/sentence/translation
+- **`SelectionState`** (`src/immersion_app/core/selection_state.py`) - Owns current word/sentence/translation and emits change signals
 - **`ShortcutManager`** - Owns keyboard shortcut state
 
-Future state managers (to be extracted):
-- **`TranslationService`** - Will own translation cache and backend state
-- **`AnkiService`** - Will own Anki connection state and queue
+Current domain services:
+- **`TranslationService`** - Owns translation cache, backend state, request deduplication, and async translation tasks
+- **`AnkiService`** - Owns Anki connection state, queue workflows, and add/process operations
+- **`PDFService`** - Owns PDF document state, render metadata, hit-testing helpers, and context extraction
+- **`VideoService`** - Owns subtitle parsing state, subtitle offset state, and subtitle lookup helpers
 
 ### State Management Pattern
 
@@ -367,9 +369,9 @@ QThreadPool.globalInstance().start(task)
 
 ## Service Layer Pattern
 
-**CRITICAL: Before adding features that touch translation, Anki, or PDF/video logic, you MUST extract the relevant service layer from `main_window.py` first.**
+**CRITICAL: Translation, Anki, PDF, and subtitle workflows belong in dedicated services.** New work must extend those services/controllers instead of reintroducing logic into `main_window.py`.
 
-### Required Services (To Be Created)
+### Required Services (Current)
 
 #### 1. TranslationService (`src/immersion_app/core/translation_service.py`)
 
@@ -379,17 +381,26 @@ QThreadPool.globalInstance().start(task)
 - Execute async translations via QRunnable workers
 - Emit signals when translations complete
 
-**Public API:**
+**Current API shape:**
 ```python
 class TranslationService(QObject):
-    translation_ready = Signal(str, dict)  # (source_text, result)
-    translation_failed = Signal(str, str)   # (source_text, error)
+    translation_ready = Signal(int, str, str, bool)
+    translation_failed = Signal(int, str, str, bool)
+    batch_ready = Signal(list, list)
+    batch_failed = Signal(str)
+    mode_changed = Signal(str)
 
-    def translate_async(self, text: str) -> None:
-        """Start async translation (check cache first)."""
+    def translate_async(self, text: str, *, visible: bool = True) -> int | None:
+        """Start async translation and dedupe in-flight requests."""
 
-    def set_backend(self, backend_type: str) -> None:
+    def prefetch_async(self, texts: list[str]) -> None:
+        """Warm the translation cache for background words."""
+
+    def set_mode(self, mode: str) -> None:
         """Switch between online/offline backends."""
+
+    def set_languages(self, learning_language: str, native_language: str) -> None:
+        """Reset cache and switch language pair."""
 
     def clear_cache(self) -> None:
         """Clear translation cache."""
@@ -403,21 +414,28 @@ class TranslationService(QObject):
 - Execute async card additions
 - Fetch vocabulary lists
 
-**Public API:**
+**Current API shape:**
 ```python
 class AnkiService(QObject):
-    connection_changed = Signal(bool)  # connected status
-    card_added = Signal(dict)          # card data
-    card_failed = Signal(str)          # error message
+    status_check_started = Signal(int)
+    connection_changed = Signal(bool)
+    vocabulary_loaded = Signal(object)
+    card_added = Signal(object)
+    card_failed = Signal(str)
+    queue_entry_added = Signal(object)
+    queue_processed = Signal(int, int, str)
 
-    def add_card(self, front: str, back: str, **fields) -> None:
-        """Add card to Anki (or queue if offline)."""
+    def refresh_connection(self) -> None:
+        """Check Anki availability in the background."""
 
-    def check_connection(self) -> bool:
-        """Check if Anki is reachable."""
+    def add_card_now(self, sentence: str, word: str, translation: str) -> int:
+        """Add a card when the UI already validated connectivity."""
 
-    def fetch_vocabulary(self) -> list[str]:
-        """Get list of words already in Anki."""
+    def queue_card(self, payload: dict) -> None:
+        """Persist a queued card entry."""
+
+    def process_queue_now(self) -> tuple[list[dict], list[dict]]:
+        """Process queued cards and persist successes/failures."""
 ```
 
 #### 3. PDFService (`src/immersion_app/core/pdf_service.py`)
@@ -427,16 +445,23 @@ class AnkiService(QObject):
 - Manage page rendering
 - Provide sentence context for selected words
 
-**Public API:**
+**Current API shape:**
 ```python
 class PDFService(QObject):
-    page_rendered = Signal(int, object)  # (page_num, image)
+    document_loaded = Signal(str, int)
+    document_closed = Signal()
 
-    def extract_words_at_point(self, page: int, x: float, y: float) -> list[str]:
-        """Get clickable words at position."""
+    def load_document(self, path: str):
+        """Open a PDF and own the document lifecycle."""
 
-    def get_sentence_context(self, page: int, word_index: int) -> str:
-        """Get full sentence containing word."""
+    def render_page(self, page_index: int, zoom_factor: float):
+        """Return render metadata used by the GUI to paint the page."""
+
+    def word_at_point(self, word_order: list[tuple], x_pdf: float, y_pdf: float):
+        """Hit-test a word at PDF coordinates."""
+
+    def extract_context(self, selected_words: list[tuple], line_map: dict) -> str:
+        """Get sentence/line context for a word span."""
 ```
 
 #### 4. VideoService (`src/immersion_app/core/video_service.py`)
@@ -446,19 +471,20 @@ class PDFService(QObject):
 - Handle subtitle offset adjustments
 - Provide word context from subtitle lines
 
-**Public API:**
+**Current API shape:**
 ```python
 class VideoService(QObject):
-    subtitles_loaded = Signal(int)  # subtitle count
+    subtitles_loaded = Signal(int)
+    subtitles_cleared = Signal()
 
     def load_subtitles(self, srt_path: str) -> None:
         """Load SRT file."""
 
-    def get_subtitle_at_time(self, seconds: float) -> Optional[str]:
-        """Get subtitle text at timestamp."""
+    def subtitle_at_position(self, position_ms: int):
+        """Get subtitle entry at the current media position."""
 
-    def get_word_context(self, subtitle_index: int, word: str) -> str:
-        """Get full subtitle line containing word."""
+    def resolve_selection_range(...) -> tuple[list[int], tuple[int, int] | None]:
+        """Resolve shift-selection in subtitle token ranges."""
 
     def set_offset(self, milliseconds: int) -> None:
         """Adjust subtitle timing offset."""
@@ -480,7 +506,7 @@ class VideoService(QObject):
 
 **Controllers orchestrate between Services and GUI.** They live in the GUI layer and handle workflows.
 
-### Create Controllers Directory
+### Controllers Directory
 
 ```
 src/immersion_app/gui/controllers/
@@ -488,6 +514,8 @@ src/immersion_app/gui/controllers/
 ├── pdf_controller.py
 └── video_controller.py
 ```
+
+Current implementation also includes `mining_controller.py` and `workspace_controller.py`.
 
 ### PDFController Example
 
@@ -498,6 +526,11 @@ src/immersion_app/gui/controllers/
 - Update SelectionState when user clicks words
 - Request translations via TranslationService
 - Orchestrate PDF mode workflows
+
+Additional controllers now in use:
+- **`MiningController`** - Connects `SelectionState`, `TranslationService`, `AnkiService`, analytics, queue actions, and translation popover state
+- **`VideoController`** - Owns subtitle/video orchestration, subtitle selection flow, and media-position-driven subtitle refresh
+- **`WorkspaceController`** - Handles open/close/recent-file/session restore routing between the window and mode-specific controllers
 
 ```python
 class PDFController(QObject):
@@ -766,6 +799,51 @@ tests/
 
 ---
 
+### Current Directory Snapshot
+
+```text
+src/immersion_app/
+|-- core/
+|   |-- mode.py
+|   |-- selection_state.py
+|   |-- translation_service.py
+|   |-- anki_service.py
+|   |-- pdf_service.py
+|   `-- video_service.py
+|-- gui/
+|   |-- theme.py
+|   |-- main_window.py
+|   |-- controllers/
+|   |   |-- __init__.py
+|   |   |-- mining_controller.py
+|   |   |-- pdf_controller.py
+|   |   |-- video_controller.py
+|   |   `-- workspace_controller.py
+|   `-- widgets/
+|       |-- command_bar.py
+|       |-- pdf_clickable_label.py
+|       |-- queue_dialog.py
+|       `-- subtitle_generator_dialog.py
+|-- integrations/
+|   `-- translation_backends.py
+`-- media/
+    `-- subtitle_parser.py
+
+tests/
+|-- test_mode_manager.py
+|-- test_selection_state.py
+|-- test_anki_service.py
+|-- test_translation_service.py
+|-- test_pdf_controller.py
+|-- test_video_service.py
+|-- test_pdf_ui.py
+`-- test_subtitle_widget.py
+```
+
+This snapshot supersedes the older "to be created" examples above.
+
+---
+
 ## Critical Anti-Patterns
 
 **NEVER do these:**
@@ -870,11 +948,11 @@ tests/
   - Signal capturing
   - State transition testing
 
-**Problem File (Needs Decomposition):**
-- `src/immersion_app/gui/main_window.py` (~1900 lines)
-  - Extract services before adding features
-  - Move orchestration to controllers
-  - Keep only window-level UI logic
+**Active Refactor Target:**
+- `src/immersion_app/gui/main_window.py`
+  - Core workflows have been extracted to services/controllers
+  - The file still contains compatibility wrappers and some window-level orchestration
+  - New feature work should go into services/controllers/widgets first, then delete wrappers from the window as coverage moves
 
 ---
 

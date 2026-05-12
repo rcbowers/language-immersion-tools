@@ -40,6 +40,15 @@ def default_user_data():
             "vocabulary_seen": [],
         },
         "recent_files": [],
+        "progress": {
+            "completed_pages": {},
+            "completed_videos": {},
+        },
+        "usage_time": {
+            "sessions": [],
+            "total_seconds": 0,
+            "last_activity_timestamp": "",
+        },
     }
 
 
@@ -92,6 +101,21 @@ def load_user_data():
     payload["last_session"] = payload.get("last_session") or default_user_data()["last_session"]
     payload["workspace"] = payload.get("workspace") or {"current_view": "welcome"}
     payload["recent_files"] = payload.get("recent_files") or []
+
+    # Ensure progress section exists
+    progress = payload.get("progress") or {}
+    payload["progress"] = {
+        "completed_pages": progress.get("completed_pages") if isinstance(progress.get("completed_pages"), dict) else {},
+        "completed_videos": progress.get("completed_videos") if isinstance(progress.get("completed_videos"), dict) else {},
+    }
+
+    # Ensure usage_time section exists
+    usage_time = payload.get("usage_time") or {}
+    payload["usage_time"] = {
+        "sessions": usage_time.get("sessions") if isinstance(usage_time.get("sessions"), list) else [],
+        "total_seconds": int(usage_time.get("total_seconds") or 0),
+        "last_activity_timestamp": str(usage_time.get("last_activity_timestamp") or ""),
+    }
 
     # Log key configuration
     logger.info(

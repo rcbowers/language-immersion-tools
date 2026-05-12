@@ -46,6 +46,10 @@ from immersion_app.core.anki_analytics import AnkiAnalyticsManager
 from immersion_app.core.anki_service import AnkiService
 from immersion_app.core.anki_snapshot import load_snapshot, save_snapshot
 from immersion_app.core.appearance_manager import AppearanceManager, AppearanceMode
+from immersion_app.core.completion_tracker import CompletionTracker
+from immersion_app.core.content_browser_manager import ContentBrowserManager
+from immersion_app.core.preview_generator import PreviewGenerator
+from immersion_app.core.usage_time_tracker import UsageTimeTracker
 from immersion_app.core.language_config import (
     DEFAULT_LEARNING_LANGUAGE,
     DEFAULT_NATIVE_LANGUAGE,
@@ -58,16 +62,24 @@ from immersion_app.core.language_config import (
     normalize_language_code,
 )
 from immersion_app.core.mode import WorkspaceMode, ModeManager
+from immersion_app.core.pdf_service import PDFService
 from immersion_app.core.selection_state import SelectionState
 from immersion_app.core.shortcuts import ShortcutManager
+from immersion_app.core.translation_service import TranslationService
+from immersion_app.core.video_service import VideoService
 from immersion_app.core.paths import DATA_ROOT, PROCESSED_LOG_PATH, QUEUE_JSON_PATH
 from immersion_app.core.queue_store import append_processed_log, append_queue_entry, load_queue_entries, queue_count, save_queue_entries
 from immersion_app.core.user_data import load_user_data, save_user_data
+from immersion_app.gui.controllers import MiningController, PDFController, VideoController, WorkspaceController
 from immersion_app.gui.widgets.card_feedback_toast import CardFeedbackToast
+from immersion_app.gui.widgets.pdf_clickable_label import ClickablePdfLabel as PdfClickableLabelWidget
+from immersion_app.gui.widgets.queue_dialog import QueueDialog as QueueDialogWidget
 from immersion_app.gui.widgets.subtitle_widget import ClickableSubtitleLabel
 from immersion_app.gui.widgets.command_bar import CommandBar
+from immersion_app.gui.widgets.subtitle_generator_dialog import SubtitleGeneratorDialog as SubtitleGeneratorDialogWidget
 from immersion_app.gui.widgets.translation_popover import TranslationPopover
 from immersion_app.gui.widgets.pdf_status_bar import PDFStatusBar
+from immersion_app.gui.widgets.shortcut_panel import ShortcutPanel
 from immersion_app.gui.widgets.transport_bar import TransportBar
 from immersion_app.gui.theme import Theme
 from immersion_app.integrations.subtitle_generation import generate_srt_from_video
@@ -404,6 +416,31 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.selection = SelectionState()
         self.shortcut_manager = ShortcutManager()
         self.anki_service = AnkiService(thread_pool=self.thread_pool, parent=self)
+        self.translation_service = TranslationService(
+            learning_language=self.user_data["preferences"].get("learning_language", DEFAULT_LEARNING_LANGUAGE),
+            native_language=self.user_data["preferences"].get("native_language", DEFAULT_NATIVE_LANGUAGE),
+            mode=self.user_data["preferences"].get("translation_mode", "offline"),
+            thread_pool=self.thread_pool,
+            parent=self,
+        )
+        self.pdf_service = PDFService(parent=self)
+        self.video_service = VideoService(
+            subtitle_offset_ms=int(self.user_data["last_session"].get("subtitle_offset_ms") or 0),
+            parent=self,
+        )
+        self.completion_tracker = CompletionTracker(self.user_data)
+        self.content_browser_manager = ContentBrowserManager(self.user_data)
+        self.preview_generator = PreviewGenerator(Path.home() / ".lingua-loop" / "data" / "previews")
+
+        # Initialize usage time tracker and connect to service signals
+        self.usage_tracker = UsageTimeTracker(self.user_data)
+        self.pdf_service.document_loaded.connect(self.usage_tracker.on_document_loaded)
+        self.pdf_service.document_closed.connect(self.usage_tracker.on_document_closed)
+        self.video_service.subtitles_loaded.connect(self._on_video_loaded_for_usage)
+        self.video_service.subtitles_cleared.connect(self.usage_tracker.on_video_closed)
+        self.selection.selection_changed.connect(lambda: self.usage_tracker.record_activity())
+        self.translation_service.translation_ready.connect(lambda *_: self.usage_tracker.record_activity())
+        self.usage_tracker.active_status_changed.connect(self._on_usage_tracking_status_changed)
 
         self.current_source_name = ""
         self.current_source_location = ""
@@ -436,12 +473,23 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.queue_dialog = None
 
         self._build_ui()
+        self.mining_controller = MiningController(
+            self,
+            self.selection,
+            self.translation_service,
+            self.anki_service,
+            self.anki_analytics,
+            parent=self,
+        )
+        self.pdf_controller = PDFController(self, self.pdf_service, self.selection, self.mining_controller, self.content_browser_manager)
+        self.video_controller = VideoController(self, self.video_service, self.mining_controller, self.content_browser_manager)
+        self.workspace_controller = WorkspaceController(self, self.pdf_controller, self.video_controller)
         self.appearance_manager.appearance_changed.connect(self._on_appearance_changed)
         self._bind_anki_service()
         self.anki_analytics.stats_changed.connect(self._on_anki_analytics_changed)
         self._determine_translation_mode()
         self._refresh_anki_status()
-        self._restore_last_session()
+        self.workspace_controller.restore_last_session()
         self._refresh_queue_summary()
         self._update_command_bar_stats()
         self._apply_theme(refresh_pdf=False)
@@ -494,6 +542,35 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.translation_popover.closed.connect(self._on_popover_closed)
         self.card_feedback_toast = CardFeedbackToast(self)
 
+        # Create shortcut panel
+        self.shortcut_panel = ShortcutPanel(
+            self.mode_manager,
+            self.completion_tracker,
+            parent=self
+        )
+        self.shortcut_panel.hide()  # Start hidden
+
+        # Connect panel signals
+        self.shortcut_panel.page_completed.connect(self._on_page_completion_toggled)
+        self.shortcut_panel.quick_add_requested.connect(self._add_now)
+        self.shortcut_panel.queue_requested.connect(self._show_queue_dialog)
+        self.shortcut_panel.theme_toggle_requested.connect(
+            self.appearance_manager.toggle_mode
+        )
+
+        # Connect tracker signals to panel
+        self.completion_tracker.completion_changed.connect(
+            self._on_completion_changed_from_tracker
+        )
+
+        # Connect mode changes to panel visibility
+        self.mode_manager.mode_changed.connect(self._update_shortcut_panel_visibility)
+
+        # Connect appearance changes to panel
+        self.appearance_manager.appearance_changed.connect(
+            self.shortcut_panel.refresh_theme
+        )
+
         # Setup keyboard shortcuts
         self._setup_keyboard_shortcuts()
 
@@ -516,6 +593,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             self.translation_popover.refresh_theme()
         if hasattr(self, "card_feedback_toast"):
             self.card_feedback_toast.refresh_theme()
+        if hasattr(self, "shortcut_panel"):
+            self.shortcut_panel.refresh_theme()
         if hasattr(self, "welcome_page"):
             self._refresh_welcome_page_theme()
         if hasattr(self, "pdf_page"):
@@ -560,6 +639,18 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         """)
         self.welcome_recent_files_list.refresh()
         self.welcome_recent_files_list.refresh_theme()
+        self.welcome_browser_heading.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_MUTED};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 11px;
+                font-weight: {Theme.FONT_WEIGHT_MEDIUM};
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 8px;
+            }}
+        """)
+        self.content_browser_grid.refresh_theme()
         self.welcome_open_button.setStyleSheet(Theme.get_button_style("primary"))
         self.welcome_queue_button.setStyleSheet(Theme.get_button_style("secondary"))
         self.welcome_shortcuts_label.setStyleSheet(f"""
@@ -609,12 +700,19 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         if event.type() == QEvent.Type.WindowStateChange:
             # 50ms delay allows Qt to complete state transition
             QTimer.singleShot(50, self._reposition_overlays)
+        elif event.type() == QEvent.Type.ActivationChange:
+            # Track window focus for usage time tracking
+            is_active = self.isActiveWindow()
+            if hasattr(self, 'usage_tracker'):
+                self.usage_tracker.set_window_focused(is_active)
 
     def _reposition_overlays(self):
         """Reposition all floating overlays based on current window geometry."""
         self._position_card_feedback_toast()
         if self.translation_popover.isVisible():
             self.translation_popover.reposition_from_stored_anchor()
+        if hasattr(self, 'shortcut_panel') and self.shortcut_panel.isVisible():
+            self.shortcut_panel.position_on_parent()
 
     def _setup_keyboard_shortcuts(self):
         """Setup mode-aware keyboard shortcuts."""
@@ -698,52 +796,24 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.shortcut_manager.add_shortcut('pdf', self._sc_fit_width)
 
     def _on_recent_file_selected(self, file_path: str, file_type: str):
-        """
-        Handle selection of a recent file.
+        self.workspace_controller.on_recent_file_selected(file_path, file_type)
 
-        Args:
-            file_path: Absolute path to the file
-            file_type: "pdf" or "video"
-        """
-        path = Path(file_path)
-
-        # Validate file exists
-        if not path.exists():
-            QMessageBox.critical(
-                self,
-                "File Not Found",
-                f"The file no longer exists:\n{file_path}\n\nIt may have been moved or deleted."
-            )
-            # Remove from recent files
-            from immersion_app.core.recent_files import remove_recent_file
-            remove_recent_file(self.user_data, file_path)
-            save_user_data(self.user_data)
-
-            # Refresh recent files display
-            if hasattr(self, 'welcome_recent_files_list'):
-                self.welcome_recent_files_list.refresh()
+    def _on_browser_content_selected(self, file_path: str):
+        """Handle content selection from browser grid."""
+        # Get content metadata to determine type and last position
+        content_item = self.content_browser_manager.get_content_by_path(file_path)
+        if not content_item:
             return
 
-        # Get the stored position from recent files
-        from immersion_app.core.recent_files import get_recent_files
-        recent_files = get_recent_files(self.user_data, validate_exists=False)
+        content_type = content_item.get("type", "")
+        last_position = content_item.get("last_position", {})
 
-        # Find the matching file entry to get its position
-        file_entry = None
-        normalized_path = os.path.normcase(os.path.abspath(file_path))
-        for entry in recent_files:
-            entry_path = os.path.normcase(os.path.abspath(entry.get("path", "")))
-            if entry_path == normalized_path:
-                file_entry = entry
-                break
-
-        # Load the file with stored position (auto-switches mode)
-        if file_type == "pdf":
-            page_index = file_entry.get("page_index", 0) if file_entry else 0
-            self._load_pdf(str(path), initial_page_index=page_index)
-        else:
-            position_ms = file_entry.get("video_position_ms", 0) if file_entry else 0
-            self._load_video(str(path), restore_position_ms=position_ms)
+        if content_type == "pdf":
+            initial_page = last_position.get("page_index", 0)
+            self.pdf_controller.load_pdf(file_path, initial_page_index=initial_page)
+        elif content_type == "video":
+            restore_position = last_position.get("video_position_ms", 0)
+            self.video_controller.load_video(file_path, restore_position_ms=restore_position)
 
     def _on_mode_changed_internal(self, mode: WorkspaceMode):
         """
@@ -865,8 +935,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         page.setStyleSheet(f"QWidget {{ background-color: {Theme.BG}; }}")
 
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(48, 48, 48, 48)
-        layout.addStretch(1)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(8)
 
         # Title
         self.welcome_title_label = QLabel("Open a PDF or video to start")
@@ -878,12 +948,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.welcome_subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.welcome_subtitle_label)
 
+        layout.addSpacing(12)
+
         # Recent files section
         from immersion_app.gui.widgets.welcome_recent_files import WelcomeRecentFilesList
         recent_container = QWidget()
         recent_layout = QVBoxLayout(recent_container)
         recent_layout.setContentsMargins(0, 0, 0, 0)
-        recent_layout.setSpacing(8)
+        recent_layout.setSpacing(4)
 
         # Section heading
         self.welcome_recent_heading = QLabel("Recent")
@@ -896,7 +968,30 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         recent_layout.addWidget(self.welcome_recent_files_list)
 
         layout.addWidget(recent_container)
-        layout.addSpacing(24)
+        layout.addSpacing(16)
+
+        # Content browser section
+        from immersion_app.gui.widgets.content_browser_grid import ContentBrowserGrid
+        browser_container = QWidget()
+        browser_layout = QVBoxLayout(browser_container)
+        browser_layout.setContentsMargins(0, 0, 0, 0)
+        browser_layout.setSpacing(4)
+
+        # Section heading
+        self.welcome_browser_heading = QLabel("Library")
+        self.welcome_browser_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        browser_layout.addWidget(self.welcome_browser_heading)
+
+        # Content browser grid widget
+        self.content_browser_grid = ContentBrowserGrid(
+            self.content_browser_manager,
+            self.preview_generator
+        )
+        self.content_browser_grid.content_selected.connect(self._on_browser_content_selected)
+        browser_layout.addWidget(self.content_browser_grid, stretch=1)
+
+        layout.addWidget(browser_container, stretch=2)
+        layout.addSpacing(12)
 
         # Buttons
         button_row = QHBoxLayout()
@@ -918,12 +1013,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         wrapper.setLayout(button_row)
         layout.addWidget(wrapper, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        layout.addStretch(1)
+        layout.addSpacing(12)
 
         # Keyboard shortcuts hint
         self.welcome_shortcuts_label = QLabel("Ctrl+O to open")
         self.welcome_shortcuts_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.welcome_shortcuts_label)
+
+        layout.addSpacing(8)
 
         return page
 
@@ -983,7 +1080,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         column_layout.setSpacing(0)
 
         # PDF scroll area
-        self.pdf_label = ClickablePdfLabel()
+        self.pdf_label = PdfClickableLabelWidget()
         self.pdf_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.pdf_label.clicked.connect(self._on_pdf_click)
         self.pdf_label.hovered.connect(self._on_pdf_hover)
@@ -1084,6 +1181,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         """Update status message (legacy method)."""
         self.status_summary_label.setText(message)
 
+    def create_subtitle_generation_worker(self, video_path: str, model_size: str, language: str):
+        return SubtitleGeneratorWorker(video_path, model_size, language)
+
     def _position_card_feedback_toast(self):
         if not hasattr(self, "card_feedback_toast"):
             return
@@ -1124,12 +1224,37 @@ class UnifiedSentenceMinerWindow(QMainWindow):
     def _show_queue_dialog(self):
         entries = load_queue_entries()
         if self.queue_dialog is None:
-            self.queue_dialog = QueueDialog(self)
+            self.queue_dialog = QueueDialogWidget(self)
             self.queue_dialog.process_button.clicked.connect(self._process_queue_from_dialog)
         self.queue_dialog.refresh(entries)
         self.queue_dialog.show()
         self.queue_dialog.raise_()
         self.queue_dialog.activateWindow()
+
+    def _on_page_completion_toggled(self, file_path: str, page: int, is_checked: bool):
+        """Handle page completion toggle from shortcut panel."""
+        if is_checked:
+            self.completion_tracker.mark_page_complete(file_path, page)
+        else:
+            self.completion_tracker.unmark_page_complete(file_path, page)
+
+    def _on_completion_changed_from_tracker(self, file_path: str, page: int, is_complete: bool):
+        """Handle completion state changes from tracker (for feedback)."""
+        if is_complete:
+            # Show success toast
+            self.card_feedback_toast.show_feedback(
+                title="Page marked complete!",
+                body=f"Page {page + 1} completed on {datetime.now().strftime('%b %d, %Y')}",
+                variant="added"
+            )
+
+    def _update_shortcut_panel_visibility(self, mode: WorkspaceMode):
+        """Show/hide shortcut panel based on mode."""
+        if mode in (WorkspaceMode.PDF, WorkspaceMode.VIDEO):
+            self.shortcut_panel.show()
+            self.shortcut_panel.position_on_parent()
+        else:
+            self.shortcut_panel.hide()
 
     def _process_queue_from_dialog(self):
         self._process_queue()
@@ -1150,28 +1275,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             return False
 
     def _determine_translation_mode(self):
-        logger.debug("Determining available translation mode")
-        # Check availability without creating new instances unnecessarily
-        if self._check_internet_connection():
-            # Use cached online backend if available, otherwise create temporary one for check
-            online_backend = self._online_backend if self._online_backend is not None else OnlineTranslationBackend()
-            if online_backend.is_available():
-                if self.translation_mode != "offline":
-                    logger.info("Online translation backend available, using online mode")
-                    self.translation_mode = "online"
-                else:
-                    logger.debug("Online backend available but staying in offline mode")
-                self._update_translation_status_label()
-                return
-
-        # Fall back to offline mode if available
-        logger.debug("Online backend unavailable, checking offline backend")
-        offline_backend = self._offline_backend if self._offline_backend is not None else MarianMTTranslationBackend()
-        if offline_backend.is_available():
-            logger.info("Using offline translation mode")
+        if self.translation_service.is_mode_available("online") and self.translation_mode != "offline":
+            self.translation_mode = "online"
+        elif self.translation_service.is_mode_available("offline"):
             self.translation_mode = "offline"
-        else:
-            logger.warning("No translation backend available (online and offline both unavailable)")
+        self.translation_service.set_mode(self.translation_mode)
         self._update_translation_status_label()
 
     def _update_translation_status_label(self):
@@ -1190,25 +1298,19 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         save_user_data(self.user_data)
 
     def _toggle_translation_mode(self):
-        logger.info(f"Toggling translation mode from {self.translation_mode}")
         if self.translation_mode == "online":
-            # Check offline availability
-            offline_backend = self._offline_backend if self._offline_backend is not None else MarianMTTranslationBackend()
-            if not offline_backend.is_available():
+            if not self.translation_service.is_mode_available("offline"):
                 logger.warning("Cannot switch to offline mode: backend not available")
                 self._set_status("Offline translation backend is not installed.")
                 return
-            logger.info("Switched to offline translation mode")
             self.translation_mode = "offline"
         else:
-            # Check online availability
-            online_backend = self._online_backend if self._online_backend is not None else OnlineTranslationBackend()
-            if not online_backend.is_available():
+            if not self.translation_service.is_mode_available("online"):
                 logger.warning("Cannot switch to online mode: backend not available")
                 self._set_status("Online translation backend is not installed.")
                 return
-            logger.info("Switched to online translation mode")
             self.translation_mode = "online"
+        self.translation_service.set_mode(self.translation_mode)
         self._update_translation_status_label()
 
     def _set_appearance_mode(self, mode: str):
@@ -1227,29 +1329,20 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _set_learning_language(self, code):
         self.learning_language = normalize_language_code(code, DEFAULT_LEARNING_LANGUAGE)
-        self._reset_translation_cache()
+        self.mining_controller.set_languages(self.learning_language, self.native_language)
         self.user_data["preferences"]["learning_language"] = self.learning_language
         save_user_data(self.user_data)
         self._set_status(f"Learning language: {get_language_label(self.learning_language)}")
 
     def _set_native_language(self, code):
         self.native_language = normalize_language_code(code, DEFAULT_NATIVE_LANGUAGE)
-        self._reset_translation_cache()
+        self.mining_controller.set_languages(self.learning_language, self.native_language)
         self.user_data["preferences"]["native_language"] = self.native_language
         save_user_data(self.user_data)
         self._set_status(f"Native language: {get_language_label(self.native_language)}")
 
     def _reset_translation_cache(self):
-        self.translation_cache.clear()
-        self._translation_context_version += 1
-        # Reset backend instances when cache is reset (language change)
-        self._online_backend = None
-
-        # Clear MarianMT model cache when language changes
-        if self._offline_backend is not None:
-            if hasattr(self._offline_backend, 'clear_model_cache'):
-                self._offline_backend.clear_model_cache()
-        self._offline_backend = None
+        self.translation_service.clear_cache()
 
     def _translation_cache_key(self, text):
         return (self.learning_language, self.native_language, text)
@@ -1316,34 +1409,29 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         return request_id
 
     def _request_translation(self, text):
+        if hasattr(self, "mining_controller"):
+            self.mining_controller.request_translation(text)
+            return
         self._start_translation_request(text, visible=True)
 
     def _prefetch_translations(self, texts):
-        """
-        Prefetch translations for multiple texts efficiently.
-        Uses batch translation for online mode to minimize API calls.
-        """
+        if hasattr(self, "mining_controller"):
+            self.mining_controller.prefetch_translations(list(texts))
+            return
         if not texts:
             return
-
-        # Filter out texts that are already cached or being requested
         texts_to_fetch = []
         for text in texts:
             if not text:
                 continue
             key = self._translation_cache_key(text)
-            # Skip if already cached or already being requested
             if key not in self.translation_cache and key not in self._translation_requests_by_key:
                 texts_to_fetch.append(text)
-
         if not texts_to_fetch:
             return
-
-        # For online mode, use batch translation for efficiency
         if self.translation_mode == "online":
             self._prefetch_translations_batch(texts_to_fetch)
         else:
-            # For offline mode, process individually (batch not implemented yet)
             for text in texts_to_fetch:
                 self._start_translation_request(text, visible=False)
 
@@ -1452,6 +1540,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         logger.warning(f"Batch translation prefetch failed: {error_message}")
 
     def _translate_word_field_input(self):
+        if hasattr(self, "mining_controller"):
+            self.mining_controller.submit_manual_word(self.word_value.text())
+            return
         text = self.word_value.text().strip()
         if not text:
             self.selection.word = ""
@@ -1504,11 +1595,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         if hasattr(self, "subtitle_label"):
             self.subtitle_label.highlight_word_range(None, None)
 
-        if had_pdf_selection and self.doc and self.mode_manager.current_mode == WorkspaceMode.PDF:
-            self._render_current_page()
-
-        self._update_selection_panel()
-        self._update_action_buttons()
+        if had_pdf_selection and self.pdf_service.doc and self.mode_manager.current_mode == WorkspaceMode.PDF:
+            self.pdf_controller.render_current_page()
         self._close_popover()
 
     def _show_translation_popover(self):
@@ -1575,27 +1663,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         return QRect(top_left, local_rect.size())
 
     def _pdf_selection_anchor_rect(self):
-        if not self.selection.pdf.selected_words:
-            return QRect()
-
-        first_line_key = (int(self.selection.pdf.selected_words[0][5]), int(self.selection.pdf.selected_words[0][6]))
-        first_line_words = [word for word in self.selection.pdf.selected_words if (int(word[5]), int(word[6])) == first_line_key]
-        if not first_line_words:
-            return QRect()
-
-        left = min(word[0] for word in first_line_words)
-        top = min(word[1] for word in first_line_words)
-        right = max(word[2] for word in first_line_words)
-        bottom = max(word[3] for word in first_line_words)
-
-        local_rect = QRect(
-            int(left * self.zoom_factor),
-            int(top * self.zoom_factor),
-            max(1, int((right - left) * self.zoom_factor)),
-            max(1, int((bottom - top) * self.zoom_factor)),
-        )
-        top_left = self.pdf_label.mapTo(self, local_rect.topLeft())
-        return QRect(top_left, local_rect.size())
+        return self.pdf_controller.selection_anchor_rect()
 
     def _update_command_bar_stats(self):
         """Update the stats chip in the command bar."""
@@ -1609,7 +1677,24 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.command_bar.set_stats(today_count, total_count)
         self._refresh_word_highlights()
 
+    def _on_video_loaded_for_usage(self, subtitle_count: int):
+        """Handle video loaded signal for usage tracking."""
+        # Video service doesn't have a video_loaded signal, but we can track via subtitle loading
+        # When subtitles are loaded, use the current video path if available
+        if hasattr(self, 'current_video_path') and self.current_video_path:
+            self.usage_tracker.on_video_loaded(self.current_video_path)
+
+    def _on_usage_tracking_status_changed(self, is_active: bool):
+        """Update status bars when usage tracking active status changes."""
+        if hasattr(self, 'pdf_status_bar'):
+            self.pdf_status_bar.set_usage_tracking_active(is_active)
+        if hasattr(self, 'transport_bar'):
+            self.transport_bar.set_usage_tracking_active(is_active)
+
     def _jump_to_page(self, page_number: int):
+        if hasattr(self, "pdf_controller"):
+            self.pdf_controller.jump_to_page(page_number)
+            return
         if not self.doc or not (1 <= page_number <= self.doc.page_count):
             return
         self.current_page_index = page_number - 1
@@ -1625,9 +1710,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.scroll_area.verticalScrollBar().setValue(0)
 
     def _replay_subtitle(self):
-        """Jump to the start of the current subtitle."""
-        if self.current_subtitle:
-            self.media_player.setPosition(self.current_subtitle.start_ms)
+        self.video_controller.replay_subtitle()
 
     def _on_speed_changed(self, speed: float):
         """Handle playback speed change."""
@@ -1731,68 +1814,54 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._show_card_feedback("Queued for later", payload["sentence"], "queued", reason=reason)
 
     def _add_now(self):
-        if not self.selection.word or not self.selection.translation:
-            logger.debug("Skipping card add: no word or translation selected")
+        if hasattr(self, "mining_controller"):
+            self.mining_controller.add_now()
             return
-        logger.info(f"Adding card now: word='{self.selection.word}', translation='{self.selection.translation}', anki_connected={self.is_anki_connected}")
-        if not self.is_anki_connected:
-            logger.warning("Anki not connected, queueing card instead")
-            try:
-                self._queue_current_selection_for_later("AnkiConnect is not available")
-            except Exception as exc:
-                logger.error(f"Failed to queue card: {exc}", exc_info=True)
-                QMessageBox.critical(self, "Queue Write Failed", str(exc))
+        if not self.selection.word or not self.selection.translation:
+            return
+        if not getattr(self, "is_anki_connected", False):
+            self._queue_current_selection_for_later("AnkiConnect is not available")
             return
         try:
             note_sentence = self._build_note_sentence()
             note_id = add_anki_card(note_sentence, self.selection.word, self.selection.translation)
-            logger.info(f"Successfully added card to Anki (note_id={note_id}): '{note_sentence}'")
             self._record_successful_card_add(self.selection.word)
             self._show_card_feedback("Added to Anki", note_sentence, "added", note_id=note_id)
             self._close_popover()
         except Exception as exc:
             if isinstance(exc, ConnectionError):
-                logger.error(f"Anki connection error during card add: {exc}", exc_info=True)
-                try:
-                    self._queue_current_selection_for_later(str(exc))
-                except Exception as queue_exc:
-                    logger.error(f"Failed to queue card after connection error: {queue_exc}", exc_info=True)
-                    QMessageBox.critical(self, "Queue Write Failed", str(queue_exc))
+                self._queue_current_selection_for_later(str(exc))
                 return
-            logger.error(f"Failed to add card to Anki: {exc}", exc_info=True)
             QMessageBox.critical(self, "Anki Add Failed", str(exc))
 
     def _add_to_queue(self):
+        if hasattr(self, "mining_controller"):
+            self.mining_controller.add_to_queue()
+            return
         if not self.selection.word or not self.selection.translation:
-            logger.debug("Skipping queue add: no word or translation selected")
             return
         try:
             payload = self._queue_payload()
-            logger.info(f"Adding to queue: word='{payload['word']}', sentence='{payload['sentence'][:50]}...'")
             append_queue_entry(payload)
             self._refresh_queue_summary()
             self._show_card_feedback("Saved to queue", payload["sentence"], "queued")
         except Exception as exc:
-            logger.error(f"Failed to add card to queue: {exc}", exc_info=True)
             QMessageBox.critical(self, "Queue Write Failed", str(exc))
 
     def _process_queue(self):
+        if hasattr(self, "mining_controller"):
+            self.mining_controller.process_queue()
+            return
         entries = load_queue_entries()
-        queue_size = len(entries)
-        logger.info(f"Processing queue with {queue_size} entries")
         if not entries:
-            logger.debug("Queue is empty")
             QMessageBox.information(self, "Queue Empty", "No queued cards found.")
             return
-        if not self.is_anki_connected:
-            logger.warning("Cannot process queue: Anki not connected")
+        if not getattr(self, "is_anki_connected", False):
             QMessageBox.warning(self, "Anki Not Connected", "AnkiConnect is not available.")
             return
-
         successful_entries = []
         failed_entries = []
-        for i, entry in enumerate(entries, 1):
-            logger.debug(f"Processing queue entry {i}/{queue_size}: word='{entry.get('word')}'")
+        for entry in entries:
             sentence = entry["sentence"]
             if sentence in self.sentence_counts:
                 self.sentence_counts[sentence] += 1
@@ -1804,15 +1873,12 @@ class UnifiedSentenceMinerWindow(QMainWindow):
                 add_anki_card(sentence_for_note, entry["word"], entry["translation"])
                 successful_entries.append(entry)
                 self._record_successful_card_add(entry["word"])
-            except Exception as exc:
-                logger.error(f"Failed to add queued card '{entry.get('word')}': {exc}", exc_info=True)
+            except Exception:
                 failed_entries.append(entry)
-
         if successful_entries:
             append_processed_log(successful_entries)
         save_queue_entries(failed_entries)
         self._refresh_queue_summary()
-        logger.info(f"Queue processing complete: {len(successful_entries)} added, {len(failed_entries)} failed")
         QMessageBox.information(
             self,
             "Queue Processed",
@@ -1820,161 +1886,70 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         )
 
     def _open_content_dialog(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open source", "", self.SUPPORTED_CONTENT_FILTER)
-        if not path:
-            return
-        if Path(path).suffix.lower() == ".pdf":
-            self._load_pdf(path)
-        else:
-            self._load_video(path)
+        self.workspace_controller.open_content_dialog()
 
     def _close_current_file(self):
-        if self.media_player:
-            self.media_player.stop()
-        if self.doc:
-            self.doc.close()
-            self.doc = None
-        self.current_pdf_path = ""
-        self.current_video_path = ""
-        self.current_srt_path = ""
-        self.subtitle_parser = None
-        self.current_source_name = ""
-        self._clear_selection_state()
-        self.command_bar.set_title("No document loaded")
-        self.command_bar.set_file_loaded(False)
-        self.command_bar.set_page_info(0, 0)
-        self._persist_session()
-
-        # Update mode manager
-        self.mode_manager.set_pdf_loaded(False)
-        self.mode_manager.set_video_loaded(False)
-        self.mode_manager.set_mode(WorkspaceMode.WELCOME, force=True)
+        self.workspace_controller.close_current_file()
 
     def _load_pdf(self, path, initial_page_index=0):
-        logger.info(f"Loading PDF: {path}")
-        try:
-            self.doc = fitz.open(path)
-            logger.info(f"PDF opened successfully: {Path(path).name} ({self.doc.page_count} pages)")
-        except Exception as exc:
-            logger.error(f"Failed to open PDF '{path}': {exc}", exc_info=True)
-            QMessageBox.critical(self, "PDF Error", f"Failed to open PDF:\n{exc}")
+        if hasattr(self, "pdf_controller"):
+            self.pdf_controller.load_pdf(path, initial_page_index=initial_page_index)
+            self.current_pdf_path = self.pdf_controller.current_pdf_path
+            self.current_page_index = self.pdf_controller.current_page_index
+            self.doc = self.pdf_service.doc
             return
-
+        self.doc = fitz.open(path)
         self.current_pdf_path = path
         self.current_page_index = max(0, min(initial_page_index, self.doc.page_count - 1))
         self.current_source_name = Path(path).name
         self.current_source_location = f"Page {self.current_page_index + 1}"
-        logger.debug(f"PDF page set to {self.current_page_index + 1}/{self.doc.page_count}")
         self._clear_selection_state()
         QTimer.singleShot(0, self._fit_width)
         QTimer.singleShot(0, self._reset_pdf_scroll_position)
         self._update_source_summary()
         self._persist_session()
         self._set_status(f"Opened PDF: {Path(path).name}")
-
-        # Update command bar
-        self.command_bar.set_title(
-            Path(path).name,
-            f"{self.doc.page_count} pages"
-        )
+        self.command_bar.set_title(Path(path).name, f"{self.doc.page_count} pages")
         self.command_bar.set_file_loaded(True)
         self.command_bar.set_page_info(self.current_page_index + 1, self.doc.page_count)
         self._update_command_bar_stats()
-
-        # Update mode manager
         self.mode_manager.set_pdf_loaded(True)
         self.mode_manager.set_mode(WorkspaceMode.PDF, force=True)
-
-        # Add to recent files
         from immersion_app.core.recent_files import add_recent_file
-        add_recent_file(
-            self.user_data,
-            str(self.current_pdf_path),
-            "pdf",
-            {"page_index": self.current_page_index}
-        )
+        add_recent_file(self.user_data, str(self.current_pdf_path), "pdf", {"page_index": self.current_page_index})
         save_user_data(self.user_data)
 
     def _render_current_page(self):
+        if hasattr(self, "pdf_controller"):
+            self.pdf_controller.render_current_page()
+            self.page_words = self.pdf_controller.page_words
+            self.page_word_order = self.pdf_controller.page_word_order
+            self.page_word_index = self.pdf_controller.page_word_index
+            self.page_line_words = self.pdf_controller.page_line_words
+            self.current_page_index = self.pdf_controller.current_page_index
+            self.zoom_factor = self.pdf_controller.zoom_factor
+            return
         if not self.doc:
             return
-
         page = self.doc.load_page(self.current_page_index)
         matrix = fitz.Matrix(self.zoom_factor, self.zoom_factor)
         pix = page.get_pixmap(matrix=matrix, alpha=False)
         image = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
         if self.appearance_manager.current_mode == AppearanceMode.DARK:
             image.invertPixels()
-
-        # Get words before painting
-        self.page_words = page.get_text("words")
-        self.page_word_order = sorted(
-            self.page_words,
-            key=lambda w: (int(w[5]), int(w[6]), int(w[7]), float(w[1]), float(w[0])),
-        )
-
-        # Draw word highlights
         painter = QPainter(image)
-
-        # 1. Draw seen/new state highlights for all words
-        for word_obj in self.page_words:
-            x0, y0, x1, y1, text = word_obj[0:5]
-
-            # Clean the word text for vocabulary lookup
-            cleaned_text = self._clean_word(text)
-            if not cleaned_text:
-                continue
-
-            # Check if word is in vocabulary (seen state)
-            is_seen = cleaned_text.lower() in self.analytics_vocabulary
-
-            # Choose color based on state
-            if is_seen:
-                color = Theme.to_qcolor(Theme.HL_SEEN)
-            else:
-                color = Theme.to_qcolor(Theme.HL_NEW)
-
-            # Draw background rectangle
-            rect_x = int(x0 * self.zoom_factor)
-            rect_y = int(y0 * self.zoom_factor)
-            rect_w = max(1, int((x1 - x0) * self.zoom_factor))
-            rect_h = max(1, int((y1 - y0) * self.zoom_factor))
-
-            painter.fillRect(rect_x, rect_y, rect_w, rect_h, color)
-
-        # 2. Draw selection highlight on top (for currently selected word)
-        if self.selection.pdf.highlight_bboxes:
-            selection_color = Theme.to_qcolor(Theme.HL_SELECTED)
-            for x0, y0, x1, y1 in self.selection.pdf.highlight_bboxes:
-                rect_x = int(x0 * self.zoom_factor)
-                rect_y = int(y0 * self.zoom_factor)
-                rect_w = max(1, int((x1 - x0) * self.zoom_factor))
-                rect_h = max(1, int((y1 - y0) * self.zoom_factor))
-                painter.fillRect(rect_x, rect_y, rect_w, rect_h, selection_color)
-
         painter.end()
-
         pixmap = QPixmap.fromImage(image)
         self.pdf_label.setPixmap(pixmap)
         self.pdf_label.resize(pixmap.size())
-
+        self.page_words = page.get_text("words")
+        self.page_word_order = sorted(self.page_words, key=lambda w: (int(w[5]), int(w[6]), int(w[7]), float(w[1]), float(w[0])))
         self.page_word_index = {self._word_key(word): idx for idx, word in enumerate(self.page_word_order)}
         self.page_line_words = self._build_line_index(self.page_words)
-        self._prefetch_translations(self._iter_unique_clean_words(word[4] for word in self.page_word_order))
         self.current_source_location = f"Page {self.current_page_index + 1}"
         self._update_source_summary()
         self.command_bar.set_page_info(self.current_page_index + 1, self.doc.page_count)
-
-        # Update zoom display in status bar
         self.pdf_status_bar.set_zoom_level(self.zoom_factor)
-        if (
-            self.mode_manager.current_mode == WorkspaceMode.PDF
-            and self.selection.pdf.selected_words
-            and self.selection.translation
-            and self.selection.translation != "translating..."
-            and not self.selection.translation.startswith("Translation error:")
-        ):
-            self._show_translation_popover()
 
     def _build_line_index(self, words):
         line_map = {}
@@ -1998,80 +1973,10 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         )
 
     def _on_pdf_click(self, point, modifiers):
-        if not self.doc or not self.page_words:
-            return
-        x_pdf = point.x() / self.zoom_factor
-        y_pdf = point.y() / self.zoom_factor
-        hit_word = None
-        for word in self.page_word_order:
-            if word[0] <= x_pdf <= word[2] and word[1] <= y_pdf <= word[3]:
-                hit_word = word
-                break
-        if not hit_word:
-            self._clear_selection_state()
-            return
-
-        shift_pressed = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
-        selected_words = self._resolve_selected_words(hit_word, shift_pressed)
-        cleaned_words = [self._clean_word(selected[4]) for selected in selected_words if self._clean_word(selected[4])]
-        if not cleaned_words:
-            return
-        self.selection.pdf.highlight_bboxes = [(w[0], w[1], w[2], w[3]) for w in selected_words]
-        self.selection.pdf.selected_words = list(selected_words)
-        self.selection.video.selected_indices = []
-        self.selection.word = " ".join(cleaned_words)
-        self.selection.sentence = self._extract_context_for_selection(selected_words)
-        self.current_source_location = f"Page {self.current_page_index + 1}"
-        self._update_selection_panel()
-        self._update_action_buttons()
-        self._render_current_page()
-        self._request_translation(self.selection.word)
+        self.pdf_controller.click_at(point, modifiers)
 
     def _on_pdf_hover(self, point, modifiers):
-        """Show translation preview on Ctrl+hover, behaving exactly like a click."""
-        # Only act on Ctrl+hover
-        if not (modifiers & Qt.KeyboardModifier.ControlModifier):
-            return
-
-        if not self.doc or not self.page_words:
-            return
-
-        # Find word under cursor (same logic as click)
-        x_pdf = point.x() / self.zoom_factor
-        y_pdf = point.y() / self.zoom_factor
-        hit_word = None
-        for word in self.page_word_order:
-            if word[0] <= x_pdf <= word[2] and word[1] <= y_pdf <= word[3]:
-                hit_word = word
-                break
-
-        if not hit_word:
-            return
-
-        # Extract word text
-        word_text = self._clean_word(hit_word[4])
-        if not word_text:
-            return
-
-        # Skip if this is already the selected word (avoid redundant updates)
-        if word_text == self.selection.word:
-            return
-
-        # Set full selection state including highlights (same as click)
-        self.selection.pdf.highlight_bboxes = [(hit_word[0], hit_word[1], hit_word[2], hit_word[3])]
-        self.selection.pdf.selected_words = [hit_word]
-        self.selection.video.selected_indices = []
-        self.selection.word = word_text
-        self.selection.sentence = self._extract_context_for_selection([hit_word])
-        self.current_source_location = f"Page {self.current_page_index + 1}"
-
-        # Update UI and render highlight
-        self._update_selection_panel()
-        self._update_action_buttons()
-        self._render_current_page()
-
-        # Request translation (popover will show when translation completes)
-        self._request_translation(word_text)
+        self.pdf_controller.hover_at(point, modifiers)
 
     def _resolve_selected_words(self, hit_word, shift_pressed):
         hit_key = self._word_key(hit_word)
@@ -2095,6 +2000,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         return " ".join(item[4] for item in line_words)
 
     def _prev_page(self):
+        if hasattr(self, "pdf_controller"):
+            self.pdf_controller.prev_page()
+            return
         if not self.doc or self.current_page_index <= 0:
             return
         self.current_page_index -= 1
@@ -2105,6 +2013,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._persist_session()
 
     def _next_page(self):
+        if hasattr(self, "pdf_controller"):
+            self.pdf_controller.next_page()
+            return
         if not self.doc or self.current_page_index >= self.doc.page_count - 1:
             return
         self.current_page_index += 1
@@ -2115,29 +2026,37 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._persist_session()
 
     def _zoom_in(self):
+        if hasattr(self, "pdf_controller"):
+            self.pdf_controller.zoom_in()
+            return
         if self.doc:
             self.zoom_factor = min(4.0, self.zoom_factor + 0.25)
             self._render_current_page()
 
     def _zoom_out(self):
+        if hasattr(self, "pdf_controller"):
+            self.pdf_controller.zoom_out()
+            return
         if self.doc:
             self.zoom_factor = max(0.5, self.zoom_factor - 0.25)
             self._render_current_page()
 
     def _reset_zoom(self):
-        """Reset zoom to 100% (factor 2.0)."""
+        if hasattr(self, "pdf_controller"):
+            self.pdf_controller.reset_zoom()
+            return
         if self.doc:
             self.zoom_factor = 2.0
             self._render_current_page()
 
     def _fit_width(self):
-        """Fit PDF to reading column width."""
+        if hasattr(self, "pdf_controller"):
+            self.pdf_controller.fit_width()
+            return
         if not self.doc:
             return
         page = self.doc.load_page(self.current_page_index)
-        # Get reading column widget (parent of scroll_area)
         reading_column = self.scroll_area.parent()
-        # Account for margins (36px on each side = 72px total)
         available = max(200, reading_column.width() - 72)
         self.zoom_factor = max(0.5, min(4.0, (available / page.rect.width) - 0.25))
         self._render_current_page()
@@ -2151,104 +2070,16 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._load_subtitles(path)
 
     def _load_video(self, path, restore_position_ms=0):
-        """Load video with validation and error handling."""
-        logger.info(f"Loading video: {path} (restore_position={restore_position_ms}ms)")
-
-        # Validate file exists
-        video_path = Path(path)
-        if not video_path.exists():
-            logger.error(f"Video file not found: {path}")
-            QMessageBox.critical(self, "File Not Found", f"Video file does not exist:\n{path}")
-            return
-
-        # Validate file size (detect empty/corrupt files)
-        file_size = video_path.stat().st_size
-        logger.debug(f"Video file size: {file_size} bytes")
-        if file_size < 1024:  # Less than 1KB
-            logger.warning(f"Video file too small ({file_size} bytes), may be corrupted: {path}")
-            QMessageBox.warning(
-                self,
-                "Invalid File",
-                f"Video file appears to be empty or corrupted:\n{video_path.name}"
-            )
-            return
-
-        # Continue with existing loading logic...
-        self.current_video_path = path
-        self.current_source_name = Path(path).name
-        self.current_source_location = "00:00"
-        self.media_player.setSource(QUrl.fromLocalFile(path))
-        if restore_position_ms > 0:
-            logger.debug(f"Scheduling position restoration to {restore_position_ms}ms")
-            QTimer.singleShot(400, lambda: self.media_player.setPosition(restore_position_ms))
-
-        auto_srt = find_best_srt_for_video(path)
-        if auto_srt:
-            logger.info(f"Auto-detected subtitle file: {auto_srt}")
-            self._load_subtitles(auto_srt)
-        else:
-            logger.debug("No subtitle file auto-detected")
-            self.subtitle_parser = None
-            self.current_srt_path = ""
-            self.subtitle_label.set_subtitle(None)
-        self._update_source_summary()
-        self._persist_session()
-        # Note: Don't set "Loaded video" status immediately - wait for mediaStatusChanged
-
-        # Update command bar
-        self.command_bar.set_title(
-            Path(path).name,
-            "Video"
-        )
-        self.command_bar.set_file_loaded(True)
-        self._update_command_bar_stats()
-
-        # Update mode manager
-        self.mode_manager.set_video_loaded(True)
-        self.mode_manager.set_mode(WorkspaceMode.VIDEO, force=True)
-
-        # Add to recent files
-        from immersion_app.core.recent_files import add_recent_file
-        position_ms = self.media_player.position() if self.media_player else 0
-        add_recent_file(
-            self.user_data,
-            str(self.current_video_path),
-            "video",
-            {"video_position_ms": position_ms}
-        )
-        save_user_data(self.user_data)
+        self.video_controller.load_video(path, restore_position_ms=restore_position_ms)
+        self.current_video_path = self.video_controller.current_video_path
 
     def _load_subtitles(self, srt_path):
-        logger.info(f"Loading subtitles: {srt_path}")
-        try:
-            self.subtitle_parser = SRTParser.from_file(srt_path)
-            entry_count = len(self.subtitle_parser.entries) if self.subtitle_parser else 0
-            logger.info(f"Loaded {entry_count} subtitle entries from {Path(srt_path).name}")
-            self.current_srt_path = srt_path
-            self._persist_session()
-            self._set_status(f"Loaded subtitles: {Path(srt_path).name}")
-        except Exception as exc:
-            logger.error(f"Failed to load subtitles from {srt_path}: {exc}", exc_info=True)
-            QMessageBox.critical(self, "Subtitle Error", f"Failed to parse subtitles:\n{exc}")
+        self.video_controller.load_subtitles(srt_path)
+        self.subtitle_parser = self.video_service.subtitle_parser
+        self.current_srt_path = self.video_service.current_srt_path
 
     def _generate_subtitles_interactive(self):
-        if not self.current_video_path:
-            QMessageBox.information(self, "No Video", "Open a video source first.")
-            return
-        dialog = SubtitleGeneratorDialog(self, default_language=get_whisper_language_code(self.learning_language))
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        dialog.status_label.setText("Starting generation...")
-        dialog.progress_bar.setVisible(True)
-        worker = SubtitleGeneratorWorker(
-            self.current_video_path,
-            dialog.selected_model(),
-            dialog.selected_language(),
-        )
-        worker.signals.progress.connect(dialog.status_label.setText)
-        worker.signals.finished.connect(lambda srt_path: self._on_subtitle_generation_finished(dialog, srt_path))
-        worker.signals.failed.connect(lambda message: QMessageBox.critical(self, "Subtitle Generation Error", message))
-        self._subtitle_thread_pool.start(worker)
+        self.video_controller.generate_subtitles_interactive()
 
     def _on_subtitle_generation_finished(self, dialog, srt_path):
         dialog.status_label.setText("Finished")
@@ -2256,6 +2087,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._set_status(f"Generated subtitles: {Path(srt_path).name}")
 
     def _on_subtitle_click(self, word, token_index, modifiers):
+        if hasattr(self, "video_controller"):
+            self.video_controller.on_subtitle_click(token_index, modifiers)
+            return
         if not self.current_subtitle:
             return
         words = self.current_subtitle.words
@@ -2289,6 +2123,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         return list(range(start, end + 1))
 
     def _on_position_changed(self, position):
+        if hasattr(self, "video_controller"):
+            self.video_controller.on_position_changed(position)
+            return
         if not self._is_slider_dragging:
             self.transport_bar.set_position(position)
         duration = self.media_player.duration()
@@ -2299,6 +2136,10 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._update_source_summary()
 
     def _refresh_subtitle_for_position(self, position):
+        if hasattr(self, "video_controller"):
+            self.video_controller.refresh_subtitle_for_position(position)
+            self.current_subtitle = self.video_controller.current_subtitle
+            return
         if not self.subtitle_parser:
             self.current_subtitle = None
             self.selection.video.anchor = None
@@ -2334,10 +2175,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
     def _toggle_play_pause(self):
         if self.workspace_stack.currentWidget() != self.video_page:
             return
-        if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-            self.media_player.pause()
-        else:
-            self.media_player.play()
+        self.video_controller.toggle_play_pause()
 
     def _seek_relative(self, delta_ms):
         current = self.media_player.position()
@@ -2345,7 +2183,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.media_player.setPosition(target)
 
     def _adjust_subtitle_offset(self, delta_ms):
-        self.subtitle_offset_ms += delta_ms
+        self.video_service.set_offset(self.video_service.subtitle_offset_ms + delta_ms)
+        self.subtitle_offset_ms = self.video_service.subtitle_offset_ms
         self.subtitle_offset_label.setText(f"Subtitle Offset: {self.subtitle_offset_ms / 1000.0:+.2f}s")
         self._refresh_subtitle_for_position(self.media_player.position())
         self._persist_session()
@@ -2447,7 +2286,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
                 "video_path": self.current_video_path,
                 "video_position_ms": video_pos,
                 "srt_path": self.current_srt_path,
-                "subtitle_offset_ms": int(self.subtitle_offset_ms),
+                "subtitle_offset_ms": int(self.video_service.subtitle_offset_ms),
             }
         )
 
@@ -2482,46 +2321,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         save_user_data(self.user_data)
 
     def _restore_last_session(self):
-        session = self.user_data["last_session"]
-        content_type = str(session.get("content_type") or "")
-        pdf_path = str(session.get("pdf_path") or "")
-        video_path = str(session.get("video_path") or "")
-
-        logger.info(f"Restoring session: content_type={content_type}, pdf={pdf_path or 'none'}, video={video_path or 'none'}")
-
-        def _try_video():
-            if video_path and Path(video_path).exists():
-                logger.info(f"Restoring video session: {video_path}")
-                self.subtitle_offset_ms = int(session.get("subtitle_offset_ms") or 0)
-                self._load_video(video_path, restore_position_ms=int(session.get("video_position_ms") or 0))
-                srt_path = str(session.get("srt_path") or "")
-                if srt_path and Path(srt_path).exists():
-                    self._load_subtitles(srt_path)
-                return True
-            elif video_path:
-                logger.warning(f"Video from last session not found: {video_path}")
-            return False
-
-        def _try_pdf():
-            if pdf_path and Path(pdf_path).exists():
-                logger.info(f"Restoring PDF session: {pdf_path}")
-                self._load_pdf(pdf_path, initial_page_index=int(session.get("page_index") or 0))
-                return True
-            elif pdf_path:
-                logger.warning(f"PDF from last session not found: {pdf_path}")
-            return False
-
-        if content_type == "pdf":
-            if _try_pdf() or _try_video():
-                return
-        else:
-            if _try_video() or _try_pdf():
-                return
-
-        logger.debug("No valid session to restore")
-        if content_type in ("pdf", "video"):
-            self.command_bar.set_mode(content_type)
+        self.workspace_controller.restore_last_session()
 
     def closeEvent(self, event):
+        # Finalize usage time session before closing
+        if hasattr(self, 'usage_tracker'):
+            self.usage_tracker.finalize_current_session()
         self._persist_session()
         super().closeEvent(event)

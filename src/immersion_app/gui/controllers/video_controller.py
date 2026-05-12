@@ -1,0 +1,160 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtCore import QTimer, Qt, QUrl
+from PySide6.QtWidgets import QDialog, QMessageBox
+
+from immersion_app.core.language_config import get_whisper_language_code
+from immersion_app.core.mode import WorkspaceMode
+from immersion_app.core.recent_files import add_recent_file
+from immersion_app.core.user_data import save_user_data
+from immersion_app.gui.widgets.subtitle_generator_dialog import SubtitleGeneratorDialog
+from immersion_app.media.subtitle_matching import find_best_srt_for_video
+
+
+class VideoController:
+    def __init__(self, window, video_service, mining_controller, content_browser_manager=None):
+        self.window = window
+        self.video_service = video_service
+        self.mining_controller = mining_controller
+        self.content_browser_manager = content_browser_manager
+        self.current_video_path = ""
+        self.current_subtitle = None
+
+    def load_video(self, path: str, restore_position_ms: int = 0):
+        video_path = Path(path)
+        if not video_path.exists():
+            QMessageBox.critical(self.window, "File Not Found", f"Video file does not exist:\n{path}")
+            return
+        if video_path.stat().st_size < 1024:
+            QMessageBox.warning(self.window, "Invalid File", f"Video file appears to be empty or corrupted:\n{video_path.name}")
+            return
+        self.current_video_path = path
+        self.window.current_source_name = video_path.name
+        self.window.current_source_location = "00:00"
+        self.window.media_player.setSource(QUrl.fromLocalFile(path))
+        if restore_position_ms > 0:
+            QTimer.singleShot(400, lambda: self.window.media_player.setPosition(restore_position_ms))
+        auto_srt = find_best_srt_for_video(path)
+        if auto_srt:
+            self.load_subtitles(auto_srt)
+        else:
+            self.video_service.clear_subtitles()
+            self.current_subtitle = None
+            self.window.subtitle_label.set_subtitle(None)
+        self.window._update_source_summary()
+        self.window._persist_session()
+        self.window.command_bar.set_title(video_path.name, "Video")
+        self.window.command_bar.set_file_loaded(True)
+        self.window._update_command_bar_stats()
+        self.window.mode_manager.set_video_loaded(True)
+        self.window.mode_manager.set_mode(WorkspaceMode.VIDEO, force=True)
+        current_position = self.window.media_player.position() if self.window.media_player else 0
+        add_recent_file(self.window.user_data, str(path), "video", {"video_position_ms": current_position})
+
+        # Add to content browser
+        if self.content_browser_manager:
+            duration_ms = self.window.media_player.duration() if self.window.media_player else 0
+            self.content_browser_manager.add_content(
+                file_path=str(path),
+                content_type="video",
+                duration_ms=duration_ms if duration_ms > 0 else None,
+                last_position={"video_position_ms": current_position}
+            )
+
+        save_user_data(self.window.user_data)
+
+    def load_subtitles(self, srt_path: str):
+        try:
+            parser = self.video_service.load_subtitles(srt_path)
+        except Exception as exc:
+            QMessageBox.critical(self.window, "Subtitle Error", f"Failed to parse subtitles:\n{exc}")
+            return
+        self.window.current_srt_path = srt_path
+        self.window._persist_session()
+        self.window._set_status(f"Loaded subtitles: {Path(srt_path).name}")
+        if parser.subtitles:
+            self.current_subtitle = None
+
+    def generate_subtitles_interactive(self):
+        if not self.current_video_path:
+            QMessageBox.information(self.window, "No Video", "Open a video source first.")
+            return
+        dialog = SubtitleGeneratorDialog(self.window, default_language=get_whisper_language_code(self.window.learning_language))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        worker = self.window.create_subtitle_generation_worker(self.current_video_path, dialog.selected_model(), dialog.selected_language())
+        dialog.status_label.setText("Starting generation...")
+        dialog.progress_bar.setVisible(True)
+        worker.signals.progress.connect(dialog.status_label.setText)
+        worker.signals.finished.connect(lambda srt_path: self._on_generation_finished(dialog, srt_path))
+        worker.signals.failed.connect(lambda message: QMessageBox.critical(self.window, "Subtitle Generation Error", message))
+        self.window._subtitle_thread_pool.start(worker)
+
+    def _on_generation_finished(self, dialog, srt_path: str):
+        dialog.status_label.setText("Finished")
+        self.load_subtitles(srt_path)
+        self.window._set_status(f"Generated subtitles: {Path(srt_path).name}")
+
+    def on_subtitle_click(self, token_index: int, modifiers):
+        if not self.current_subtitle:
+            return
+        words = self.current_subtitle.words
+        selected_indices, anchor = self.video_service.resolve_selection_range(
+            token_index,
+            bool(modifiers & Qt.KeyboardModifier.ShiftModifier),
+            self.window.selection.video.anchor,
+            self.current_subtitle.index,
+            len(words),
+        )
+        cleaned_words = [self.window._clean_word(words[idx].word) for idx in selected_indices if self.window._clean_word(words[idx].word)]
+        if not cleaned_words:
+            return
+        self.window.selection.set_video_selection(
+            word=" ".join(cleaned_words),
+            sentence=self.current_subtitle.text,
+            selected_indices=list(selected_indices),
+            anchor=anchor,
+        )
+        self.window.current_source_location = self.window._fmt_ms(self.window.media_player.position())
+        self.window.subtitle_label.highlight_word_range(selected_indices[0], selected_indices[-1])
+        self.mining_controller.request_translation(self.window.selection.word)
+
+    def on_position_changed(self, position: int):
+        if not self.window._is_slider_dragging:
+            self.window.transport_bar.set_position(position)
+        duration = self.window.media_player.duration()
+        self.window.transport_bar.set_time(position, duration)
+        self.window.current_source_location = self.window._fmt_ms(position)
+        self.window.subtitle_offset_label.setText(f"Subtitle Offset: {self.video_service.subtitle_offset_ms / 1000.0:+.2f}s")
+        self.refresh_subtitle_for_position(position)
+        self.window._update_source_summary()
+
+    def refresh_subtitle_for_position(self, position: int):
+        subtitle = self.video_service.subtitle_at_position(position)
+        if subtitle is None:
+            self.current_subtitle = None
+            self.window.selection.video.anchor = None
+            self.window.selection.video.selected_indices = []
+            self.window.subtitle_label.set_subtitle(None)
+            self.window._close_popover()
+            return
+        if self.current_subtitle is None or subtitle.index != self.current_subtitle.index:
+            self.current_subtitle = subtitle
+            self.window.selection.video.anchor = None
+            self.window.selection.video.selected_indices = []
+            self.window.subtitle_label.set_subtitle(subtitle)
+            words = list(self.window._iter_unique_clean_words(word.word for word in subtitle.words))
+            self.mining_controller.prefetch_translations(words)
+            self.window._close_popover()
+
+    def replay_subtitle(self):
+        if self.current_subtitle:
+            self.window.media_player.setPosition(self.current_subtitle.start_ms)
+
+    def toggle_play_pause(self):
+        if self.window.media_player.playbackState() == self.window.media_player.PlaybackState.PlayingState:
+            self.window.media_player.pause()
+        else:
+            self.window.media_player.play()
