@@ -6,10 +6,10 @@ import android.graphics.RectF
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.immersion.core.PageRenderResult
-import com.immersion.core.PdfService
 import com.immersion.core.QueueEntry
 import com.immersion.core.QueueStore
+import com.immersion.core.ReflowPage
+import com.immersion.core.PdfService
 import com.immersion.core.SelectionState
 import com.immersion.core.TranslationService
 import com.immersion.core.Word
@@ -20,14 +20,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 
 data class UiState(
-    val currentPage: PageRenderResult? = null,
+    val reflowPage: ReflowPage? = null,
     val pageIndex: Int = 0,
-    val zoom: Float = 1f,
     val vocabularyWords: Set<String> = emptySet(),
     val queueCount: Int = 0,
     val ankiAvailable: Boolean = false,
@@ -49,8 +47,6 @@ class PdfViewModel(application: Application) : AndroidViewModel(application) {
     private val _ui = MutableStateFlow(UiState())
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
-    private var currentWordOrder: List<Word> = emptyList()
-
     // ── Document ──────────────────────────────────────────────────────────────
 
     fun openDocument(uri: Uri) {
@@ -61,7 +57,7 @@ class PdfViewModel(application: Application) : AndroidViewModel(application) {
                 pdfService.loadDocument(fd)
                 val title = uri.lastPathSegment ?: "Document"
                 _ui.value = _ui.value.copy(documentTitle = title, pageIndex = 0, error = null)
-                renderPage(0)
+                loadPage(0)
                 refreshVocabulary()
                 refreshQueueCount()
             } catch (e: Exception) {
@@ -72,51 +68,44 @@ class PdfViewModel(application: Application) : AndroidViewModel(application) {
 
     fun goToPage(index: Int) {
         val clamped = index.coerceIn(0, (pdfService.pageCount - 1).coerceAtLeast(0))
-        if (clamped == _ui.value.pageIndex && _ui.value.currentPage != null) return
+        if (clamped == _ui.value.pageIndex && _ui.value.reflowPage != null) return
         viewModelScope.launch(Dispatchers.IO) {
             _ui.value = _ui.value.copy(pageIndex = clamped)
-            renderPage(clamped)
+            loadPage(clamped)
             selection.clearAll()
         }
     }
 
-    fun setZoom(zoom: Float) {
-        val clamped = zoom.coerceIn(0.5f, 4.0f)
-        viewModelScope.launch(Dispatchers.IO) {
-            _ui.value = _ui.value.copy(zoom = clamped)
-            renderPage(_ui.value.pageIndex)
-        }
+    private suspend fun loadPage(index: Int) {
+        val result = pdfService.extractParagraphs(index) ?: return
+        _ui.value = _ui.value.copy(reflowPage = result)
     }
 
-    private suspend fun renderPage(index: Int) {
-        val result = pdfService.renderPage(index, _ui.value.zoom) ?: return
-        currentWordOrder = result.wordOrder
-        _ui.value = _ui.value.copy(currentPage = result)
-    }
+    // ── Word tap ──────────────────────────────────────────────────────────────
 
-    // ── Word tap / selection ──────────────────────────────────────────────────
+    /**
+     * Called when the user taps a word in the reflowed text view.
+     * [wordIndex] is the position of the word in [ReflowPage.pageWords].
+     */
+    fun onWordTap(wordIndex: Int) {
+        val page = _ui.value.reflowPage ?: return
+        if (wordIndex !in page.pageWords.indices) return
+        val hit = page.pageWords[wordIndex]
 
-    /** [x], [y] are in PDF coordinate space (screen coords divided by zoom). */
-    fun onWordTap(x: Float, y: Float, shiftHeld: Boolean = false) {
-        val words = _ui.value.currentPage?.words ?: return
-        val hit = pdfService.wordAtPoint(x, y, words) ?: run {
-            selection.clearAll()
-            return
+        // Context sentence = full paragraph containing this word (better than single PDF line)
+        val paragraph = page.paragraphs.firstOrNull { p ->
+            p.words.any { it.wordIndex == wordIndex }
         }
-        val anchor = if (shiftHeld) selection.current.anchorWord else null
-        val selected = pdfService.resolveSelectedWords(hit, anchor, currentWordOrder, shiftHeld)
-        val word = selected.joinToString(" ") { it.text.trim(',', '.', '!', '?', ':', ';', '"', '\'') }
-        val sentence = pdfService.extractContext(selected, _ui.value.currentPage?.words ?: emptyList())
-        val bboxes = selected.map { RectF(it.x0, it.y0, it.x1, it.y1) }
+        val sentence = paragraph?.words?.joinToString(" ") { it.text } ?: hit.text
 
         selection.setPdfSelection(
-            word = word,
+            word = hit.text.trim(',', '.', '!', '?', ':', ';', '"', '\''),
             sentence = sentence,
-            selectedWords = selected,
-            bboxes = bboxes,
-            anchor = if (shiftHeld) anchor ?: hit else hit,
+            selectedWords = listOf(hit),
+            bboxes = listOf(RectF(hit.x0, hit.y0, hit.x1, hit.y1)),
+            anchor = hit,
         )
-        requestTranslation(word)
+        requestTranslation(selection.current.word)
     }
 
     private fun requestTranslation(word: String) {
@@ -145,7 +134,6 @@ class PdfViewModel(application: Application) : AndroidViewModel(application) {
             if (noteId != null) {
                 refreshVocabulary()
             } else {
-                // Anki unavailable — fall back to queue silently
                 queueCard()
             }
         }
@@ -167,7 +155,7 @@ class PdfViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Settings / UI ─────────────────────────────────────────────────────────
+    // ── UI state ──────────────────────────────────────────────────────────────
 
     fun toggleDarkMode() {
         _ui.value = _ui.value.copy(darkMode = !_ui.value.darkMode)
@@ -181,13 +169,16 @@ class PdfViewModel(application: Application) : AndroidViewModel(application) {
         _ui.value = _ui.value.copy(uiVisible = true)
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun refreshVocabulary() {
         viewModelScope.launch(Dispatchers.IO) {
             val deck = prefs().getString("anki_deck", "2025 Spanish Immersion")!!
             val words = ankiAdapter.fetchDeckWords(context, deck)
-            _ui.value = _ui.value.copy(vocabularyWords = words, ankiAvailable = ankiAdapter.isAvailable(context))
+            _ui.value = _ui.value.copy(
+                vocabularyWords = words,
+                ankiAvailable = ankiAdapter.isAvailable(context),
+            )
         }
     }
 
