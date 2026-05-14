@@ -6,8 +6,6 @@ import com.artifex.mupdf.fitz.ColorSpace
 import com.artifex.mupdf.fitz.Document
 import com.artifex.mupdf.fitz.Matrix
 import com.artifex.mupdf.fitz.Page
-import com.artifex.mupdf.fitz.Rect
-import com.artifex.mupdf.fitz.StructuredText
 
 data class Word(
     val x0: Float,
@@ -45,6 +43,51 @@ class PdfService {
 
     val pageCount: Int get() = doc?.countPages() ?: 0
 
+    // ── Reflow (primary reading path) ─────────────────────────────────────────
+
+    fun extractParagraphs(pageIndex: Int): ReflowPage? {
+        val document = doc ?: return null
+        val page = document.loadPage(pageIndex)
+        val structuredText = page.toStructuredText("words")
+
+        val allWords = extractWords(page)
+        val wordOrder = allWords.sortedWith(compareBy({ it.y0 }, { it.x0 }))
+
+        // Page-wide median char height — used to identify headings
+        val heights = wordOrder.map { it.y1 - it.y0 }.sorted()
+        val medianHeight = if (heights.isEmpty()) 12f else heights[heights.size / 2]
+
+        val paragraphs = mutableListOf<ReflowParagraph>()
+        var blockIdx = 0
+
+        for (block in structuredText.blocks ?: emptyArray()) {
+            val blockWords = wordOrder
+                .filter { it.blockIndex == blockIdx }
+                .filter { it.text.isNotBlank() }
+
+            if (blockWords.isNotEmpty()) {
+                val avgHeight = blockWords.map { it.y1 - it.y0 }.average().toFloat()
+                val isHeading = avgHeight > medianHeight * 1.3f
+
+                val reflowWords = blockWords.map { w ->
+                    ReflowWord(
+                        text = w.text,
+                        wordIndex = wordOrder.indexOf(w),
+                        charHeightPx = w.y1 - w.y0,
+                    )
+                }
+                paragraphs.add(ReflowParagraph(reflowWords, isHeading))
+            }
+            blockIdx++
+        }
+
+        structuredText.destroy()
+        page.destroy()
+        return ReflowPage(paragraphs, wordOrder, document.countPages())
+    }
+
+    // ── Bitmap render (kept for reference / future fallback toggle) ───────────
+
     fun renderPage(pageIndex: Int, zoom: Float): PageRenderResult? {
         val document = doc ?: return null
         val page = document.loadPage(pageIndex)
@@ -75,7 +118,9 @@ class PdfService {
         return PageRenderResult(bitmap, words, wordOrder, document.countPages())
     }
 
-    private fun extractWords(page: Page): List<Word> {
+    // ── Text extraction ───────────────────────────────────────────────────────
+
+    internal fun extractWords(page: Page): List<Word> {
         val text = page.toStructuredText("words")
         val words = mutableListOf<Word>()
         var blockIdx = 0
@@ -122,7 +167,8 @@ class PdfService {
         return words
     }
 
-    /** Returns the word whose bounding box (slightly expanded) contains (x, y) in PDF coordinates. */
+    // ── Selection helpers ─────────────────────────────────────────────────────
+
     fun wordAtPoint(x: Float, y: Float, words: List<Word>): Word? {
         val expand = 2f
         return words.firstOrNull { w ->
@@ -131,11 +177,6 @@ class PdfService {
         }
     }
 
-    /**
-     * Returns the list of selected words for a tap.
-     * With [shift]=true and a valid [anchor], returns all words between anchor and hit
-     * in reading order. Otherwise returns just [hit].
-     */
     fun resolveSelectedWords(
         hit: Word,
         anchor: Word?,
@@ -150,7 +191,6 @@ class PdfService {
         return wordOrder.subList(from, to + 1)
     }
 
-    /** Returns the full line text that contains the selected words. */
     fun extractContext(selected: List<Word>, allWords: List<Word>): String {
         if (selected.isEmpty()) return ""
         val firstSelected = selected.first()

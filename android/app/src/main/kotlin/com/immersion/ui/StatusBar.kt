@@ -20,17 +20,16 @@ import androidx.compose.ui.unit.dp
 import com.immersion.ui.theme.AppType
 import com.immersion.ui.theme.Layout
 import com.immersion.ui.theme.LocalAppColors
-import kotlin.math.roundToInt
 
 @Composable
 fun StatusBar(
-    zoom: Float,
+    pageIndex: Int,
+    pageCount: Int,
     ankiAvailable: Boolean,
     queueCount: Int,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalAppColors.current
-    val zoomPercent = (zoom * 100).roundToInt()
 
     Row(
         modifier = modifier
@@ -41,14 +40,21 @@ fun StatusBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
+        // Left: progress fraction
+        val progressText = if (pageCount > 0) {
+            val percent = ((pageIndex + 1).toFloat() / pageCount * 100).toInt()
+            "$percent% through"
+        } else {
+            ""
+        }
         Text(
-            text = "$zoomPercent%",
+            text = progressText,
             style = AppType.caption,
             color = colors.textMuted,
         )
 
+        // Right: Anki status dot + label
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // Connection status dot
             Spacer(
                 Modifier
                     .size(6.dp)
