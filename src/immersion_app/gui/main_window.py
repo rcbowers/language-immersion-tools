@@ -1244,7 +1244,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         """Handle completion state changes from tracker (for feedback)."""
         if is_complete:
             # Show success toast
-            self.card_feedback_toast.show_feedback(
+            self.card_feedback_toast.show_message(
                 title="Page marked complete!",
                 body=f"Page {page + 1} completed on {datetime.now().strftime('%b %d, %Y')}",
                 variant="added"

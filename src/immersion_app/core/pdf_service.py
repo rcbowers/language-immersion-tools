@@ -117,3 +117,36 @@ class PDFService(QObject):
 
     def source_name(self) -> str:
         return Path(self.current_path).name if self.current_path else ""
+
+    def merge_highlight_bboxes(self, selected_words: list[tuple]) -> list[tuple[float, float, float, float]]:
+        """
+        Merge bounding boxes for consecutive words on the same line into continuous highlights.
+
+        Args:
+            selected_words: List of word tuples with structure (x0, y0, x1, y1, text, block, line, word_num, ...)
+
+        Returns:
+            List of merged bounding boxes (x0, y0, x1, y1) - one per line
+        """
+        if not selected_words:
+            return []
+
+        # Group words by line (block number and line number)
+        lines = {}
+        for word in selected_words:
+            line_key = (int(word[5]), int(word[6]))
+            if line_key not in lines:
+                lines[line_key] = []
+            lines[line_key].append(word)
+
+        # Create merged bounding boxes for each line
+        merged_bboxes = []
+        for line_words in lines.values():
+            # Find the extents of all words on this line
+            x0 = min(w[0] for w in line_words)
+            y0 = min(w[1] for w in line_words)
+            x1 = max(w[2] for w in line_words)
+            y1 = max(w[3] for w in line_words)
+            merged_bboxes.append((x0, y0, x1, y1))
+
+        return merged_bboxes

@@ -35,7 +35,9 @@ class PDFController:
             QMessageBox.critical(self.window, "PDF Error", f"Failed to open PDF:\n{exc}")
             return
         self.current_pdf_path = path
+        self.window.current_pdf_path = path
         self.current_page_index = max(0, min(initial_page_index, doc.page_count - 1))
+        self.window.current_page_index = self.current_page_index
         self.window.current_source_name = Path(path).name
         self.window.current_source_location = f"Page {self.current_page_index + 1}"
         self.mining_controller.clear_selection()
@@ -143,7 +145,7 @@ class PDFController:
             word=" ".join(cleaned_words),
             sentence=self.pdf_service.extract_context(selected_words, self.page_line_words),
             selected_words=list(selected_words),
-            highlight_bboxes=[(w[0], w[1], w[2], w[3]) for w in selected_words],
+            highlight_bboxes=self.pdf_service.merge_highlight_bboxes(selected_words),
         )
         self.window.current_source_location = f"Page {self.current_page_index + 1}"
         self.render_current_page()
@@ -167,7 +169,7 @@ class PDFController:
             word=word_text,
             sentence=self.pdf_service.extract_context([hit_word], self.page_line_words),
             selected_words=[hit_word],
-            highlight_bboxes=[(hit_word[0], hit_word[1], hit_word[2], hit_word[3])],
+            highlight_bboxes=self.pdf_service.merge_highlight_bboxes([hit_word]),
         )
         self.window.current_source_location = f"Page {self.current_page_index + 1}"
         self.render_current_page()
@@ -177,27 +179,45 @@ class PDFController:
         if self.pdf_service.doc is None or not (1 <= page_number <= self.pdf_service.doc.page_count):
             return
         self.current_page_index = page_number - 1
+        self.window.current_page_index = self.current_page_index
         self.mining_controller.clear_selection()
         self.render_current_page()
         self.window._reset_pdf_scroll_position()
+        if self.content_browser_manager and self.current_pdf_path:
+            self.content_browser_manager.update_last_position(
+                self.current_pdf_path,
+                {"page_index": self.current_page_index}
+            )
         self.window._persist_session()
 
     def prev_page(self):
         if self.pdf_service.doc is None or self.current_page_index <= 0:
             return
         self.current_page_index -= 1
+        self.window.current_page_index = self.current_page_index
         self.mining_controller.clear_selection()
         self.render_current_page()
         self.window._reset_pdf_scroll_position()
+        if self.content_browser_manager and self.current_pdf_path:
+            self.content_browser_manager.update_last_position(
+                self.current_pdf_path,
+                {"page_index": self.current_page_index}
+            )
         self.window._persist_session()
 
     def next_page(self):
         if self.pdf_service.doc is None or self.current_page_index >= self.pdf_service.doc.page_count - 1:
             return
         self.current_page_index += 1
+        self.window.current_page_index = self.current_page_index
         self.mining_controller.clear_selection()
         self.render_current_page()
         self.window._reset_pdf_scroll_position()
+        if self.content_browser_manager and self.current_pdf_path:
+            self.content_browser_manager.update_last_position(
+                self.current_pdf_path,
+                {"page_index": self.current_page_index}
+            )
         self.window._persist_session()
 
     def zoom_in(self):
