@@ -1234,7 +1234,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
     def _on_page_completion_toggled(self, file_path: str, page: int, is_checked: bool):
         """Handle page completion toggle from shortcut panel."""
         if is_checked:
-            self.completion_tracker.mark_page_complete(file_path, page)
+            # Mark this page and all previous pages complete
+            for page_index in range(page + 1):
+                self.completion_tracker.mark_page_complete(file_path, page_index)
         else:
             self.completion_tracker.unmark_page_complete(file_path, page)
 

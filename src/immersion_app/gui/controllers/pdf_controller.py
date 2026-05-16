@@ -115,6 +115,8 @@ class PDFController:
         self.mining_controller.prefetch_translations(words)
         if self.window.mode_manager.current_mode == WorkspaceMode.PDF and self.selection.pdf.selected_words and self.selection.translation and self.selection.translation != "translating..." and not self.selection.translation.startswith("Translation error:"):
             self.window._show_translation_popover()
+        elif not self.selection.pdf.selected_words:
+            self.window._close_popover()
 
     def click_at(self, point, modifiers):
         if not self.page_words:
@@ -124,6 +126,7 @@ class PDFController:
         hit_word = self.pdf_service.word_at_point(self.page_word_order, x_pdf, y_pdf)
         if not hit_word:
             self.mining_controller.clear_selection()
+            self.render_current_page()
             return
         selected_words, anchor_key = self.pdf_service.resolve_selected_words(
             hit_word,
