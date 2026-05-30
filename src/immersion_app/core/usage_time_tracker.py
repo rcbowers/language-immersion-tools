@@ -35,6 +35,10 @@ class UsageTimeTracker(QObject):
         self._session_start_time: datetime | None = None
         self._session_start_location: str = ""
         self._current_location: str = ""
+        self._start_page_index: int | None = None
+        self._current_page_index: int | None = None
+        self._start_position_ms: int | None = None
+        self._current_position_ms: int | None = None
         self._is_window_focused: bool = False
 
         # Inactivity timer (checks every 30 seconds)
@@ -50,7 +54,10 @@ class UsageTimeTracker(QObject):
         usage_time = self._user_data.setdefault("usage_time", {})
         sessions = usage_time.get("sessions")
         usage_time["sessions"] = sessions if isinstance(sessions, list) else []
-        usage_time["total_seconds"] = int(usage_time.get("total_seconds") or 0)
+        try:
+            usage_time["total_seconds"] = int(usage_time.get("total_seconds") or 0)
+        except (TypeError, ValueError):
+            usage_time["total_seconds"] = 0
         usage_time["last_activity_timestamp"] = str(usage_time.get("last_activity_timestamp") or "")
         return usage_time
 
@@ -75,6 +82,10 @@ class UsageTimeTracker(QObject):
         self._session_start_time = datetime.now()
         self._session_start_location = "Page 1"
         self._current_location = "Page 1"
+        self._start_page_index = 0
+        self._current_page_index = 0
+        self._start_position_ms = None
+        self._current_position_ms = None
         self._activity_buffer.clear()
 
         self.session_started.emit(file_path, "pdf")
@@ -96,6 +107,10 @@ class UsageTimeTracker(QObject):
         self._session_start_time = datetime.now()
         self._session_start_location = "00:00:00"
         self._current_location = "00:00:00"
+        self._start_page_index = None
+        self._current_page_index = None
+        self._start_position_ms = 0
+        self._current_position_ms = 0
         self._activity_buffer.clear()
 
         self.session_started.emit(file_path, "video")
@@ -108,6 +123,24 @@ class UsageTimeTracker(QObject):
     def update_location(self, location: str) -> None:
         """Update current location (page number, video timestamp, etc.)."""
         self._current_location = location
+
+    def set_pdf_page_index(self, page_index: int) -> None:
+        """Track the current PDF page for analytics and location metadata."""
+        normalized_index = max(0, int(page_index))
+        self._current_page_index = normalized_index
+        self._current_location = f"Page {normalized_index + 1}"
+        if self._current_file_type == "pdf" and self._start_page_index is None:
+            self._start_page_index = normalized_index
+            self._session_start_location = self._current_location
+
+    def set_video_position_ms(self, position_ms: int) -> None:
+        """Track the current video playback position for analytics and location metadata."""
+        normalized_position = max(0, int(position_ms))
+        self._current_position_ms = normalized_position
+        self._current_location = self._format_duration(normalized_position // 1000)
+        if self._current_file_type == "video" and self._start_position_ms is None:
+            self._start_position_ms = normalized_position
+            self._session_start_location = self._current_location
 
     def record_activity(self) -> None:
         """Record user activity (only if window is focused)."""
@@ -143,19 +176,37 @@ class UsageTimeTracker(QObject):
             self._reset_session_state()
             return
 
-        # Create session record
         session_end_time = datetime.now()
+        elapsed_seconds = max(
+            duration_seconds,
+            max(0, int((session_end_time - self._session_start_time).total_seconds())),
+        )
+        metadata = {
+            "source_name": os.path.basename(self._current_file_path) if self._current_file_path else "",
+            "start_location": self._session_start_location,
+            "end_location": self._current_location,
+        }
+        if self._current_file_type == "pdf":
+            start_page_index = self._start_page_index if self._start_page_index is not None else 0
+            end_page_index = self._current_page_index if self._current_page_index is not None else start_page_index
+            metadata["start_page_index"] = start_page_index
+            metadata["end_page_index"] = end_page_index
+            metadata["pages_advanced"] = max(0, end_page_index - start_page_index)
+        elif self._current_file_type == "video":
+            start_position_ms = self._start_position_ms if self._start_position_ms is not None else 0
+            end_position_ms = self._current_position_ms if self._current_position_ms is not None else start_position_ms
+            metadata["start_position_ms"] = start_position_ms
+            metadata["end_position_ms"] = end_position_ms
+            metadata["minutes_advanced"] = max(0.0, (end_position_ms - start_position_ms) / 60000.0)
+
         session_record = {
             "file_path": self._current_file_path,
             "file_type": self._current_file_type,
             "start_time": self._session_start_time.isoformat(),
             "end_time": session_end_time.isoformat(),
             "duration_seconds": duration_seconds,
-            "metadata": {
-                "source_name": os.path.basename(self._current_file_path) if self._current_file_path else "",
-                "start_location": self._session_start_location,
-                "end_location": self._current_location,
-            }
+            "elapsed_seconds": elapsed_seconds,
+            "metadata": metadata,
         }
 
         # Save to user data
@@ -182,6 +233,10 @@ class UsageTimeTracker(QObject):
         self._session_start_time = None
         self._session_start_location = ""
         self._current_location = ""
+        self._start_page_index = None
+        self._current_page_index = None
+        self._start_position_ms = None
+        self._current_position_ms = None
         self._update_active_status()
 
     def _calculate_session_duration(self) -> int:
@@ -306,3 +361,9 @@ class UsageTimeTracker(QObject):
         if new_status != self._is_active:
             self._is_active = new_status
             self.active_status_changed.emit(new_status)
+
+    @staticmethod
+    def _format_duration(total_seconds: int) -> str:
+        hours, remainder = divmod(max(0, int(total_seconds)), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"

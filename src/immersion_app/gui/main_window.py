@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from immersion_app.core.anki import add_anki_card
+from immersion_app.core.activity_analytics import ActivityAnalyticsManager
 from immersion_app.core.anki_analytics import AnkiAnalyticsManager
 from immersion_app.core.anki_service import AnkiService
 from immersion_app.core.anki_snapshot import load_snapshot, save_snapshot
@@ -70,7 +71,7 @@ from immersion_app.core.video_service import VideoService
 from immersion_app.core.paths import DATA_ROOT, PROCESSED_LOG_PATH, QUEUE_JSON_PATH
 from immersion_app.core.queue_store import append_processed_log, append_queue_entry, load_queue_entries, queue_count, save_queue_entries
 from immersion_app.core.user_data import load_user_data, save_user_data
-from immersion_app.gui.controllers import MiningController, PDFController, VideoController, WorkspaceController
+from immersion_app.gui.controllers import AnalyticsController, MiningController, PDFController, VideoController, WorkspaceController
 from immersion_app.gui.widgets.card_feedback_toast import CardFeedbackToast
 from immersion_app.gui.widgets.pdf_clickable_label import ClickablePdfLabel as PdfClickableLabelWidget
 from immersion_app.gui.widgets.queue_dialog import QueueDialog as QueueDialogWidget
@@ -434,13 +435,13 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         # Initialize usage time tracker and connect to service signals
         self.usage_tracker = UsageTimeTracker(self.user_data)
+        self.activity_analytics = ActivityAnalyticsManager(self.user_data, anki_analytics=self.anki_analytics, parent=self)
         self.pdf_service.document_loaded.connect(self.usage_tracker.on_document_loaded)
         self.pdf_service.document_closed.connect(self.usage_tracker.on_document_closed)
-        self.video_service.subtitles_loaded.connect(self._on_video_loaded_for_usage)
-        self.video_service.subtitles_cleared.connect(self.usage_tracker.on_video_closed)
         self.selection.selection_changed.connect(lambda: self.usage_tracker.record_activity())
         self.translation_service.translation_ready.connect(lambda *_: self.usage_tracker.record_activity())
         self.usage_tracker.active_status_changed.connect(self._on_usage_tracking_status_changed)
+        self.usage_tracker.session_ended.connect(lambda *_: self.activity_analytics.refresh())
 
         self.current_source_name = ""
         self.current_source_location = ""
@@ -484,9 +485,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.pdf_controller = PDFController(self, self.pdf_service, self.selection, self.mining_controller, self.content_browser_manager)
         self.video_controller = VideoController(self, self.video_service, self.mining_controller, self.content_browser_manager)
         self.workspace_controller = WorkspaceController(self, self.pdf_controller, self.video_controller)
+        self.analytics_controller = AnalyticsController(self, self.activity_analytics)
         self.appearance_manager.appearance_changed.connect(self._on_appearance_changed)
         self._bind_anki_service()
         self.anki_analytics.stats_changed.connect(self._on_anki_analytics_changed)
+        self.anki_analytics.stats_changed.connect(self.activity_analytics.refresh)
         self._determine_translation_mode()
         self._refresh_anki_status()
         self.workspace_controller.restore_last_session()
@@ -507,6 +510,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.command_bar = CommandBar(self.user_data)
         self.command_bar.open_requested.connect(self._open_content_dialog)
         self.command_bar.close_requested.connect(self._close_current_file)
+        self.command_bar.analytics_requested.connect(self._show_activity_analytics)
         self.command_bar.settings_requested.connect(self._show_settings_dialog)
         self.command_bar.previous_page_requested.connect(self._prev_page)
         self.command_bar.next_page_requested.connect(self._next_page)
@@ -601,6 +605,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             self._refresh_pdf_page_theme()
         if hasattr(self, "video_page"):
             self._refresh_video_page_theme()
+        if hasattr(self, "analytics_controller"):
+            self.analytics_controller.refresh()
         if self.queue_dialog is not None:
             self.queue_dialog.refresh_theme()
         if self.doc and refresh_pdf:
@@ -1230,6 +1236,10 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.queue_dialog.show()
         self.queue_dialog.raise_()
         self.queue_dialog.activateWindow()
+
+    def _show_activity_analytics(self):
+        if hasattr(self, "analytics_controller"):
+            self.analytics_controller.show_dialog()
 
     def _on_page_completion_toggled(self, file_path: str, page: int, is_checked: bool):
         """Handle page completion toggle from shortcut panel."""

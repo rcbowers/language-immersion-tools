@@ -29,6 +29,12 @@ class WorkspaceController:
     def close_current_file(self):
         if self.window.media_player:
             self.window.media_player.stop()
+        if (
+            self.window.mode_manager.current_mode == WorkspaceMode.VIDEO
+            and getattr(self.window, "current_video_path", "")
+            and hasattr(self.window, "usage_tracker")
+        ):
+            self.window.usage_tracker.on_video_closed()
         self.pdf_controller.pdf_service.close_document()
         self.video_controller.video_service.clear_subtitles()
         self.pdf_controller.current_pdf_path = ""

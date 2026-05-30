@@ -98,6 +98,7 @@ class CommandBar(QWidget):
 
     open_requested = Signal()
     close_requested = Signal()
+    analytics_requested = Signal()
     settings_requested = Signal()
     previous_page_requested = Signal()
     next_page_requested = Signal()
@@ -192,6 +193,12 @@ class CommandBar(QWidget):
         self.stats_chip = StatsChip()
         layout.addWidget(self.stats_chip)
 
+        self.analytics_button = QPushButton("Activity")
+        self.analytics_button.setFixedHeight(28)
+        self.analytics_button.setStyleSheet(Theme.get_button_style("secondary"))
+        self.analytics_button.clicked.connect(self.analytics_requested.emit)
+        layout.addWidget(self.analytics_button)
+
         # Settings button
         self.settings_button = QPushButton("⚙")
         self.settings_button.setFixedSize(28, 28)
@@ -207,6 +214,7 @@ class CommandBar(QWidget):
         self.stats_chip.refresh_theme()
         self.recent_button.setStyleSheet(Theme.get_button_style("secondary"))
         self.open_button.setStyleSheet(Theme.get_button_style("secondary"))
+        self.analytics_button.setStyleSheet(Theme.get_button_style("secondary"))
         self.close_button.setStyleSheet(Theme.get_button_style("ghost"))
         self.page_prev_button.setStyleSheet(Theme.get_button_style("ghost"))
         self.page_current_input.setStyleSheet(f"""

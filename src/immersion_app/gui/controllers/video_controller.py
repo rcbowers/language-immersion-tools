@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt, QUrl
+from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QDialog, QMessageBox
 
 from immersion_app.core.language_config import get_whisper_language_code
@@ -21,6 +23,7 @@ class VideoController:
         self.content_browser_manager = content_browser_manager
         self.current_video_path = ""
         self.current_subtitle = None
+        self._last_playback_activity_time: datetime | None = None
 
     def load_video(self, path: str, restore_position_ms: int = 0):
         video_path = Path(path)
@@ -31,8 +34,12 @@ class VideoController:
             QMessageBox.warning(self.window, "Invalid File", f"Video file appears to be empty or corrupted:\n{video_path.name}")
             return
         self.current_video_path = path
+        self.window.current_video_path = path
         self.window.current_source_name = video_path.name
         self.window.current_source_location = "00:00"
+        if hasattr(self.window, "usage_tracker"):
+            self.window.usage_tracker.on_video_loaded(path)
+            self.window.usage_tracker.set_video_position_ms(restore_position_ms)
         self.window.media_player.setSource(QUrl.fromLocalFile(path))
         if restore_position_ms > 0:
             QTimer.singleShot(400, lambda: self.window.media_player.setPosition(restore_position_ms))
@@ -127,6 +134,14 @@ class VideoController:
         duration = self.window.media_player.duration()
         self.window.transport_bar.set_time(position, duration)
         self.window.current_source_location = self.window._fmt_ms(position)
+        if hasattr(self.window, "usage_tracker"):
+            self.window.usage_tracker.set_video_position_ms(position)
+            if self.window.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                now = datetime.now()
+                if (self._last_playback_activity_time is None or
+                        (now - self._last_playback_activity_time).total_seconds() >= 60):
+                    self.window.usage_tracker.record_activity()
+                    self._last_playback_activity_time = now
         self.window.subtitle_offset_label.setText(f"Subtitle Offset: {self.video_service.subtitle_offset_ms / 1000.0:+.2f}s")
         self.refresh_subtitle_for_position(position)
         self.window._update_source_summary()

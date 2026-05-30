@@ -40,6 +40,8 @@ class PDFController:
         self.window.current_page_index = self.current_page_index
         self.window.current_source_name = Path(path).name
         self.window.current_source_location = f"Page {self.current_page_index + 1}"
+        if hasattr(self.window, "usage_tracker"):
+            self.window.usage_tracker.set_pdf_page_index(self.current_page_index)
         self.mining_controller.clear_selection()
         QTimer.singleShot(0, self.fit_width)
         QTimer.singleShot(0, self.window._reset_pdf_scroll_position)
@@ -106,6 +108,8 @@ class PDFController:
         self.page_line_words = result.line_map
         self.page_word_index = {self.pdf_service.word_key(word): idx for idx, word in enumerate(result.word_order)}
         self.window.current_source_location = f"Page {self.current_page_index + 1}"
+        if hasattr(self.window, "usage_tracker"):
+            self.window.usage_tracker.set_pdf_page_index(self.current_page_index)
         self.window._update_source_summary()
         self.window.command_bar.set_page_info(self.current_page_index + 1, result.page_count)
         self.window.pdf_status_bar.set_zoom_level(self.zoom_factor)
@@ -183,6 +187,8 @@ class PDFController:
         self.mining_controller.clear_selection()
         self.render_current_page()
         self.window._reset_pdf_scroll_position()
+        if hasattr(self.window, "usage_tracker"):
+            self.window.usage_tracker.record_activity()
         if self.content_browser_manager and self.current_pdf_path:
             self.content_browser_manager.update_last_position(
                 self.current_pdf_path,
@@ -198,6 +204,8 @@ class PDFController:
         self.mining_controller.clear_selection()
         self.render_current_page()
         self.window._reset_pdf_scroll_position()
+        if hasattr(self.window, "usage_tracker"):
+            self.window.usage_tracker.record_activity()
         if self.content_browser_manager and self.current_pdf_path:
             self.content_browser_manager.update_last_position(
                 self.current_pdf_path,
@@ -213,6 +221,8 @@ class PDFController:
         self.mining_controller.clear_selection()
         self.render_current_page()
         self.window._reset_pdf_scroll_position()
+        if hasattr(self.window, "usage_tracker"):
+            self.window.usage_tracker.record_activity()
         if self.content_browser_manager and self.current_pdf_path:
             self.content_browser_manager.update_last_position(
                 self.current_pdf_path,

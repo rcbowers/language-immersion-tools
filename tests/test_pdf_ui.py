@@ -28,6 +28,15 @@ class PdfWidgetTests(unittest.TestCase):
         self.assertEqual(bar.layout().contentsMargins().top(), 4)
         self.assertEqual(bar.layout().contentsMargins().bottom(), 4)
 
+    def test_command_bar_activity_button_emits_signal(self):
+        bar = CommandBar(user_data={})
+        captured = []
+        bar.analytics_requested.connect(lambda: captured.append(True))
+
+        bar.analytics_button.click()
+
+        self.assertEqual(captured, [True])
+
     def test_pdf_status_bar_shows_requested_instruction_text(self):
         bar = PDFStatusBar()
 
@@ -291,6 +300,121 @@ class PdfNavigationTests(unittest.TestCase):
 
         self.assertEqual(window.page_words, [])
         self.assertEqual(FakeImage.last_created.inverted, 1)
+
+
+class PDFControllerActivityTests(unittest.TestCase):
+    """Verify that PDF navigation actions record activity on the usage tracker."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _make_controller(self):
+        from immersion_app.gui.controllers.pdf_controller import PDFController
+
+        activity_calls = []
+
+        window = SimpleNamespace(
+            current_page_index=2,
+            current_source_location="",
+            usage_tracker=SimpleNamespace(
+                record_activity=lambda: activity_calls.append(True),
+                set_pdf_page_index=lambda idx: None,
+            ),
+            appearance_manager=SimpleNamespace(current_mode=None),
+            analytics_vocabulary=set(),
+            pdf_label=SimpleNamespace(setPixmap=lambda _: None, resize=lambda _: None),
+            selection=SimpleNamespace(
+                pdf=SimpleNamespace(highlight_bboxes=[], selected_words=[], anchor_key=None),
+                translation="",
+            ),
+            mode_manager=SimpleNamespace(current_mode=WorkspaceMode.PDF),
+            command_bar=SimpleNamespace(set_page_info=lambda *_: None),
+            pdf_status_bar=SimpleNamespace(set_zoom_level=lambda *_: None),
+            # intentionally no shortcut_panel — hasattr check in render_current_page must return False
+            scroll_area=SimpleNamespace(
+                parent=lambda: SimpleNamespace(width=lambda: 400),
+                verticalScrollBar=lambda: SimpleNamespace(setValue=lambda v: None),
+            ),
+            _update_source_summary=lambda: None,
+            _persist_session=lambda: None,
+            _reset_pdf_scroll_position=lambda: None,
+            _close_popover=lambda: None,
+            _iter_unique_clean_words=lambda words: list(words),
+            _clean_word=lambda t: t,
+        )
+
+        fake_page = SimpleNamespace(rect=SimpleNamespace(width=200))
+        doc = SimpleNamespace(page_count=5, load_page=lambda _: fake_page)
+
+        pdf_service = SimpleNamespace(
+            doc=doc,
+            render_page=lambda idx, zoom: SimpleNamespace(
+                samples=b"\xff" * 60, width=20, height=10, stride=60,
+                words=[], word_order=[], line_map={}, page_count=5,
+            ),
+            word_key=lambda w: str(w),
+        )
+
+        selection_state = window.selection
+        mining_controller = SimpleNamespace(
+            clear_selection=lambda: None,
+            prefetch_translations=lambda *_: None,
+        )
+
+        controller = PDFController(window, pdf_service, selection_state, mining_controller)
+        controller.current_page_index = 2
+        controller.current_pdf_path = "book.pdf"
+        return controller, activity_calls
+
+    def test_next_page_records_activity(self):
+        controller, calls = self._make_controller()
+
+        with patch("immersion_app.gui.controllers.pdf_controller.QImage"), \
+             patch("immersion_app.gui.controllers.pdf_controller.QPainter"), \
+             patch("immersion_app.gui.controllers.pdf_controller.QPixmap"):
+            controller.next_page()
+
+        self.assertEqual(controller.current_page_index, 3)
+        self.assertEqual(len(calls), 1, "next_page() should call record_activity() once")
+
+    def test_prev_page_records_activity(self):
+        controller, calls = self._make_controller()
+
+        with patch("immersion_app.gui.controllers.pdf_controller.QImage"), \
+             patch("immersion_app.gui.controllers.pdf_controller.QPainter"), \
+             patch("immersion_app.gui.controllers.pdf_controller.QPixmap"):
+            controller.prev_page()
+
+        self.assertEqual(controller.current_page_index, 1)
+        self.assertEqual(len(calls), 1, "prev_page() should call record_activity() once")
+
+    def test_jump_to_page_records_activity(self):
+        controller, calls = self._make_controller()
+
+        with patch("immersion_app.gui.controllers.pdf_controller.QImage"), \
+             patch("immersion_app.gui.controllers.pdf_controller.QPainter"), \
+             patch("immersion_app.gui.controllers.pdf_controller.QPixmap"):
+            controller.jump_to_page(5)
+
+        self.assertEqual(controller.current_page_index, 4)
+        self.assertEqual(len(calls), 1, "jump_to_page() should call record_activity() once")
+
+    def test_next_page_at_last_page_does_not_record_activity(self):
+        controller, calls = self._make_controller()
+        controller.current_page_index = 4  # already at last page
+
+        controller.next_page()
+
+        self.assertEqual(len(calls), 0, "next_page() at last page should not call record_activity()")
+
+    def test_prev_page_at_first_page_does_not_record_activity(self):
+        controller, calls = self._make_controller()
+        controller.current_page_index = 0  # already at first page
+
+        controller.prev_page()
+
+        self.assertEqual(len(calls), 0, "prev_page() at first page should not call record_activity()")
 
 
 if __name__ == "__main__":

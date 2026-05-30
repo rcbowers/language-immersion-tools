@@ -99,7 +99,7 @@ class TestSessionTracking:
     """Test session tracking."""
 
     @patch("immersion_app.core.usage_time_tracker.save_user_data")
-    def test_session_start_on_document_loaded(self, mock_save, empty_user_data, qtbot):
+    def test_session_start_on_document_loaded(self, mock_save, empty_user_data):
         """Verify session starts when document is loaded."""
         tracker = UsageTimeTracker(empty_user_data)
         signal_spy = Mock()
@@ -114,7 +114,7 @@ class TestSessionTracking:
         assert tracker._session_start_time is not None
 
     @patch("immersion_app.core.usage_time_tracker.save_user_data")
-    def test_session_end_on_document_closed(self, mock_save, empty_user_data, qtbot):
+    def test_session_end_on_document_closed(self, mock_save, empty_user_data):
         """Verify session ends when document is closed."""
         tracker = UsageTimeTracker(empty_user_data)
         tracker.set_window_focused(True)
@@ -139,7 +139,7 @@ class TestSessionTracking:
         signal_spy.assert_called_once()
 
     @patch("immersion_app.core.usage_time_tracker.save_user_data")
-    def test_video_session_tracking(self, mock_save, empty_user_data, qtbot):
+    def test_video_session_tracking(self, mock_save, empty_user_data):
         """Test video session tracking."""
         tracker = UsageTimeTracker(empty_user_data)
         tracker.set_window_focused(True)
@@ -156,7 +156,7 @@ class TestSessionTracking:
         mock_save.assert_called()
 
     @patch("immersion_app.core.usage_time_tracker.save_user_data")
-    def test_session_finalization_saves_data(self, mock_save, empty_user_data, qtbot):
+    def test_session_finalization_saves_data(self, mock_save, empty_user_data):
         """Verify session finalization persists data."""
         tracker = UsageTimeTracker(empty_user_data)
         tracker.set_window_focused(True)
@@ -245,6 +245,10 @@ class TestDurationCalculation:
         # Should have ~120 seconds (2 minutes)
         session = empty_user_data["usage_time"]["sessions"][0]
         assert session["duration_seconds"] == 120
+        assert session["elapsed_seconds"] >= 120
+        assert session["metadata"]["start_page_index"] == 0
+        assert session["metadata"]["end_page_index"] == 0
+        assert session["metadata"]["pages_advanced"] == 0
 
     @patch("immersion_app.core.usage_time_tracker.save_user_data")
     def test_overlapping_windows_are_merged(self, mock_save, empty_user_data):
@@ -363,6 +367,7 @@ class TestEdgeCases:
         tracker.set_window_focused(True)
 
         tracker.on_document_loaded("C:\\test\\book.pdf")
+        tracker.set_pdf_page_index(4)
         tracker.update_location("Page 5")
         tracker.record_activity()
         tracker.finalize_current_session()
@@ -371,6 +376,25 @@ class TestEdgeCases:
         assert session["metadata"]["source_name"] == "book.pdf"
         assert session["metadata"]["start_location"] == "Page 1"
         assert session["metadata"]["end_location"] == "Page 5"
+        assert session["metadata"]["start_page_index"] == 0
+        assert session["metadata"]["end_page_index"] == 4
+        assert session["metadata"]["pages_advanced"] == 4
+
+    @patch("immersion_app.core.usage_time_tracker.save_user_data")
+    def test_video_session_metadata(self, mock_save, empty_user_data):
+        """Verify machine-readable video session metrics are stored."""
+        tracker = UsageTimeTracker(empty_user_data)
+        tracker.set_window_focused(True)
+
+        tracker.on_video_loaded("C:\\test\\video.mp4")
+        tracker.set_video_position_ms(120000)
+        tracker.record_activity()
+        tracker.finalize_current_session()
+
+        session = empty_user_data["usage_time"]["sessions"][0]
+        assert session["metadata"]["start_position_ms"] == 0
+        assert session["metadata"]["end_position_ms"] == 120000
+        assert session["metadata"]["minutes_advanced"] == 2.0
 
 
 class TestDataPersistence:
@@ -390,6 +414,7 @@ class TestDataPersistence:
         # Should have valid ISO timestamps
         assert "start_time" in session
         assert "end_time" in session
+        assert "elapsed_seconds" in session
 
         # Should be parseable as ISO datetime
         start = datetime.fromisoformat(session["start_time"])
