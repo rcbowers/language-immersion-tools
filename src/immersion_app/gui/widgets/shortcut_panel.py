@@ -141,13 +141,12 @@ class ShortcutPanel(QWidget):
         self._current_page = page
         self._current_mode = mode
 
-        # Update checkbox label based on mode
+        # Update checkbox label and visibility based on mode
         if mode == WorkspaceMode.PDF:
             self.completion_checkbox.setText(f"Mark page {page + 1}\ncomplete")
-        elif mode == WorkspaceMode.VIDEO:
-            self.completion_checkbox.setText("Mark video\ncomplete")
+            self.completion_checkbox.setVisible(True)
         else:
-            self.completion_checkbox.setText("Mark complete")
+            self.completion_checkbox.setVisible(False)
 
     def update_completion_state(self, is_complete: bool):
         """Update checkbox state from tracker (external state change)."""
@@ -183,8 +182,10 @@ class ShortcutPanel(QWidget):
             # Shrink panel
             self.setFixedSize(50, 50)
         else:
-            # Show expanded widgets
+            # Show expanded widgets (skip completion checkbox in video mode)
             for widget in self._expanded_widgets:
+                if widget is self.completion_checkbox and self._current_mode == WorkspaceMode.VIDEO:
+                    continue
                 widget.show()
             self.minimize_button.setText("−")
             # Restore expanded size

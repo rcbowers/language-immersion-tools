@@ -142,7 +142,9 @@ class VideoController:
                         (now - self._last_playback_activity_time).total_seconds() >= 60):
                     self.window.usage_tracker.record_activity()
                     self._last_playback_activity_time = now
-        self.window.subtitle_offset_label.setText(f"Subtitle Offset: {self.video_service.subtitle_offset_ms / 1000.0:+.2f}s")
+        offset_text = f"Subtitle Offset: {self.video_service.subtitle_offset_ms / 1000.0:+.2f}s"
+        self.window.subtitle_offset_label.setText(offset_text)
+        self.window.video_offset_label.setText(offset_text)
         self.refresh_subtitle_for_position(position)
         self.window._update_source_summary()
 

@@ -4,6 +4,12 @@ from __future__ import annotations
 
 import os
 import sys
+
+# Must be set before any Qt or PySide6 imports so the multimedia plugin
+# loader picks up the FFmpeg backend (supports AV1, HEVC, etc.)
+os.environ["QT_MEDIA_BACKEND"] = "ffmpeg"
+os.environ.setdefault("QT_FFMPEG_DECODING_HW_DEVICE_TYPES", "")
+
 from pathlib import Path
 
 from PySide6.QtGui import QFontDatabase
@@ -11,9 +17,6 @@ from PySide6.QtWidgets import QApplication
 
 from immersion_app.core.logging_config import setup_logging
 from immersion_app.gui.main_window import UnifiedSentenceMinerWindow
-
-
-os.environ.setdefault("QT_FFMPEG_DECODING_HW_DEVICE_TYPES", "")
 
 
 def main():

@@ -769,6 +769,32 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.addAction(play_action)
         self.shortcut_manager.add_shortcut('video', play_action)
 
+        # VIDEO: Seek ±5 seconds
+        seek_back_action = QAction("Seek Back 5s", self)
+        seek_back_action.setShortcut(QKeySequence(Qt.Key.Key_Left))
+        seek_back_action.triggered.connect(lambda: self._seek_relative(-5000))
+        self.addAction(seek_back_action)
+        self.shortcut_manager.add_shortcut('video', seek_back_action)
+
+        seek_fwd_action = QAction("Seek Forward 5s", self)
+        seek_fwd_action.setShortcut(QKeySequence(Qt.Key.Key_Right))
+        seek_fwd_action.triggered.connect(lambda: self._seek_relative(5000))
+        self.addAction(seek_fwd_action)
+        self.shortcut_manager.add_shortcut('video', seek_fwd_action)
+
+        # VIDEO: Subtitle offset (Ctrl+Left/Right = ±500ms)
+        sub_offset_back_action = QAction("Subtitle Offset -500ms", self)
+        sub_offset_back_action.setShortcut(QKeySequence("Ctrl+Left"))
+        sub_offset_back_action.triggered.connect(lambda: self._adjust_subtitle_offset(-500))
+        self.addAction(sub_offset_back_action)
+        self.shortcut_manager.add_shortcut('video', sub_offset_back_action)
+
+        sub_offset_fwd_action = QAction("Subtitle Offset +500ms", self)
+        sub_offset_fwd_action.setShortcut(QKeySequence("Ctrl+Right"))
+        sub_offset_fwd_action.triggered.connect(lambda: self._adjust_subtitle_offset(500))
+        self.addAction(sub_offset_fwd_action)
+        self.shortcut_manager.add_shortcut('video', sub_offset_fwd_action)
+
         # PDF: Navigation
         prev_page_action = QAction("Previous Page", self)
         prev_page_action.setShortcut(QKeySequence(Qt.Key.Key_Left))
@@ -1153,6 +1179,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         """)
         layout.addWidget(self.subtitle_label, stretch=0)
 
+        # Subtitle offset display
+        self.video_offset_label = QLabel(f"Subtitle Offset: {getattr(self, 'subtitle_offset_ms', 0) / 1000.0:+.2f}s")
+        self.video_offset_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video_offset_label.setStyleSheet(
+            "QLabel { color: rgba(255,255,255,160); font-size: 11px; background: transparent; padding: 2px 0; }"
+        )
+        layout.addWidget(self.video_offset_label, stretch=0)
+
         # Transport bar with full controls
         self.transport_bar = TransportBar()
         self.transport_bar.play_pause_clicked.connect(self._toggle_play_pause)
@@ -1170,6 +1204,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.time_label = self.transport_bar.time_label
 
         # Media player setup
+        logger.info(f"Creating QMediaPlayer (QT_MEDIA_BACKEND={os.environ.get('QT_MEDIA_BACKEND', 'not set')})")
         self.media_player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.media_player.setAudioOutput(self.audio_output)
@@ -2197,7 +2232,9 @@ class UnifiedSentenceMinerWindow(QMainWindow):
     def _adjust_subtitle_offset(self, delta_ms):
         self.video_service.set_offset(self.video_service.subtitle_offset_ms + delta_ms)
         self.subtitle_offset_ms = self.video_service.subtitle_offset_ms
-        self.subtitle_offset_label.setText(f"Subtitle Offset: {self.subtitle_offset_ms / 1000.0:+.2f}s")
+        offset_text = f"Subtitle Offset: {self.subtitle_offset_ms / 1000.0:+.2f}s"
+        self.subtitle_offset_label.setText(offset_text)
+        self.video_offset_label.setText(offset_text)
         self._refresh_subtitle_for_position(self.media_player.position())
         self._persist_session()
 
@@ -2213,53 +2250,55 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _on_media_error(self, error, error_string):
         """Handle QMediaPlayer errors with user-friendly messages."""
-        from PySide6.QtMultimedia import QMediaPlayer
-
         if error == QMediaPlayer.Error.NoError:
             return
 
-        # Log technical details
+        # Guard: the errorOccurred signal can fire many times for the same failure.
+        # Only show one dialog per (file, error-type) pair.
+        error_key = (self.current_video_path, error)
+        if error_key == getattr(self, '_last_error_shown', None):
+            return
+        self._last_error_shown = error_key
+
         logger.error(f"Media player error: {error}, error_string='{error_string}', file='{self.current_video_path}'")
 
-        # Map to user-friendly messages
         error_messages = {
             QMediaPlayer.Error.ResourceError: "Could not access the video file. Check the file path and permissions.",
-            QMediaPlayer.Error.FormatError: "Video format or codec not supported. Try converting to H.264/MP4.",
+            QMediaPlayer.Error.FormatError: "Video format or codec not supported.",
             QMediaPlayer.Error.NetworkError: "Network error occurred while loading the video.",
             QMediaPlayer.Error.AccessDeniedError: "Permission denied. Cannot access this video file.",
-            QMediaPlayer.Error.ServiceMissingError: "Media playback service unavailable.",
         }
 
         user_message = error_messages.get(error, "Unknown video playback error")
         file_name = Path(self.current_video_path).name if self.current_video_path else "Unknown"
-
         detailed_message = f"{user_message}\n\nFile: {file_name}"
 
         if error == QMediaPlayer.Error.FormatError:
-            detailed_message += "\n\nThis may be due to an unsupported codec (e.g., AV1)."
-            detailed_message += "\nRecommended: Convert to H.264 codec with MP4 container."
+            detailed_message += "\n\nThe video codec may not be supported by this system."
 
         QMessageBox.critical(self, "Video Playback Error", detailed_message)
         self._set_status(f"Failed to load video: {user_message}")
 
     def _on_media_status_changed(self, status):
         """Monitor media loading status and detect issues early."""
-        from PySide6.QtMultimedia import QMediaPlayer
-
         logger.debug(f"Media status changed: {status}")
 
         if status == QMediaPlayer.MediaStatus.InvalidMedia:
             file_name = Path(self.current_video_path).name if self.current_video_path else "Unknown"
             logger.error(f"Invalid media detected: {self.current_video_path}")
+
+            # Guard: only show one dialog per file load attempt
+            if self.current_video_path == getattr(self, '_last_invalid_shown', None):
+                return
+            self._last_invalid_shown = self.current_video_path
+
             QMessageBox.warning(
                 self,
                 "Invalid Video",
                 f"The video file could not be loaded: {file_name}\n\n"
                 "This may be due to:\n"
-                "• Unsupported codec (e.g., AV1)\n"
-                "• Corrupted file\n"
-                "• Incomplete download\n\n"
-                "Try converting to H.264/MP4 format."
+                "• Corrupted or incomplete file\n"
+                "• Unsupported codec on this system"
             )
             self._set_status("Invalid video file")
         elif status == QMediaPlayer.MediaStatus.LoadedMedia:
