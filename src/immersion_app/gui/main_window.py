@@ -468,6 +468,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.subtitle_parser = None
         self.current_subtitle = None
         self.subtitle_offset_ms = int(self.user_data["last_session"].get("subtitle_offset_ms") or 0)
+        self.video_ui_scale = 1.0
         self._is_slider_dragging = False
         self._initial_layout_pending = True
 
@@ -700,10 +701,18 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         super().resizeEvent(event)
         self._reposition_overlays()
 
+    def _toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showMaximized()
+        else:
+            self.showFullScreen()
+
     def changeEvent(self, event):
         """Handle window state changes (maximize/minimize/fullscreen)."""
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange:
+            if hasattr(self, 'command_bar'):
+                self.command_bar.setVisible(not self.isFullScreen())
             # 50ms delay allows Qt to complete state transition
             QTimer.singleShot(50, self._reposition_overlays)
         elif event.type() == QEvent.Type.ActivationChange:
@@ -795,6 +804,19 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.addAction(sub_offset_fwd_action)
         self.shortcut_manager.add_shortcut('video', sub_offset_fwd_action)
 
+        # VIDEO: UI scale (Ctrl+=/Ctrl+- mirror the PDF zoom shortcuts but in the video group)
+        video_scale_up_action = QAction("UI Scale Up", self)
+        video_scale_up_action.setShortcut(QKeySequence("Ctrl+="))
+        video_scale_up_action.triggered.connect(self._zoom_in)
+        self.addAction(video_scale_up_action)
+        self.shortcut_manager.add_shortcut('video', video_scale_up_action)
+
+        video_scale_down_action = QAction("UI Scale Down", self)
+        video_scale_down_action.setShortcut(QKeySequence("Ctrl+-"))
+        video_scale_down_action.triggered.connect(self._zoom_out)
+        self.addAction(video_scale_down_action)
+        self.shortcut_manager.add_shortcut('video', video_scale_down_action)
+
         # PDF: Navigation
         prev_page_action = QAction("Previous Page", self)
         prev_page_action.setShortcut(QKeySequence(Qt.Key.Key_Left))
@@ -810,7 +832,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         # PDF: Zoom
         self._sc_zoom_in = QAction("Zoom In", self)
-        self._sc_zoom_in.setShortcut(QKeySequence("Ctrl++"))
+        self._sc_zoom_in.setShortcut(QKeySequence("Ctrl+="))
         self._sc_zoom_in.triggered.connect(self._zoom_in)
         self.addAction(self._sc_zoom_in)
         self.shortcut_manager.add_shortcut('pdf', self._sc_zoom_in)
@@ -826,6 +848,19 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._sc_fit_width.triggered.connect(self._fit_width)
         self.addAction(self._sc_fit_width)
         self.shortcut_manager.add_shortcut('pdf', self._sc_fit_width)
+
+        # GLOBAL: Fullscreen toggle
+        self._sc_fullscreen = QAction("Toggle Fullscreen", self)
+        self._sc_fullscreen.setShortcut(QKeySequence(Qt.Key.Key_F11))
+        self._sc_fullscreen.triggered.connect(self._toggle_fullscreen)
+        self.addAction(self._sc_fullscreen)
+        self.shortcut_manager.add_shortcut('global', self._sc_fullscreen)
+
+        self._sc_fullscreen_f = QAction("Toggle Fullscreen (F)", self)
+        self._sc_fullscreen_f.setShortcut(QKeySequence(Qt.Key.Key_F))
+        self._sc_fullscreen_f.triggered.connect(self._toggle_fullscreen)
+        self.addAction(self._sc_fullscreen_f)
+        self.shortcut_manager.add_shortcut('global', self._sc_fullscreen_f)
 
     def _on_recent_file_selected(self, file_path: str, file_type: str):
         self.workspace_controller.on_recent_file_selected(file_path, file_type)
@@ -1076,7 +1111,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.add_queue_button = QPushButton("Add to Queue")
         self.process_queue_button = QPushButton("Process Queue")
         self.mode_indicator_label = QLabel()
-        self.subtitle_offset_label = QLabel("Subtitle Offset: +0.00s")
+        self.subtitle_offset_label = QLabel("Subtitle Offset: 0.00s")
         self.health_label = QLabel()
 
         # Legacy widgets from status bar (hidden)
@@ -1164,6 +1199,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.video_widget = QVideoWidget(page)
         self.video_widget.setMinimumHeight(480)
         self.video_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.video_widget.installEventFilter(self)
         layout.addWidget(self.video_widget, stretch=1)
 
         # Subtitle overlay (positioned at bottom, above transport bar)
@@ -1180,7 +1216,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         layout.addWidget(self.subtitle_label, stretch=0)
 
         # Subtitle offset display
-        self.video_offset_label = QLabel(f"Subtitle Offset: {getattr(self, 'subtitle_offset_ms', 0) / 1000.0:+.2f}s")
+        self.video_offset_label = QLabel(self._fmt_offset(getattr(self, 'subtitle_offset_ms', 0)))
         self.video_offset_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_offset_label.setStyleSheet(
             "QLabel { color: rgba(255,255,255,160); font-size: 11px; background: transparent; padding: 2px 0; }"
@@ -1646,6 +1682,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             self.pdf_controller.render_current_page()
         self._close_popover()
 
+    def eventFilter(self, obj, event):
+        if hasattr(self, "video_widget") and obj is self.video_widget and event.type() == QEvent.Type.MouseButtonPress:
+            self._clear_selection_state()
+        return super().eventFilter(obj, event)
+
     def _show_translation_popover(self):
         """Show the inline translation overlay above the selected span."""
         if not self.selection.translation or self.selection.translation.startswith("Translation error:"):
@@ -2073,6 +2114,10 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._persist_session()
 
     def _zoom_in(self):
+        if self.mode_manager.current_mode == WorkspaceMode.VIDEO:
+            self.video_ui_scale = min(2.0, self.video_ui_scale + 0.1)
+            self._apply_video_ui_scale()
+            return
         if hasattr(self, "pdf_controller"):
             self.pdf_controller.zoom_in()
             return
@@ -2081,12 +2126,34 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             self._render_current_page()
 
     def _zoom_out(self):
+        if self.mode_manager.current_mode == WorkspaceMode.VIDEO:
+            self.video_ui_scale = max(0.7, self.video_ui_scale - 0.1)
+            self._apply_video_ui_scale()
+            return
         if hasattr(self, "pdf_controller"):
             self.pdf_controller.zoom_out()
             return
         if self.doc:
             self.zoom_factor = max(0.5, self.zoom_factor - 0.25)
             self._render_current_page()
+
+    @staticmethod
+    def _fmt_offset(ms: int) -> str:
+        secs = abs(ms / 1000.0)
+        if ms > 0:
+            return f"Subtitle Offset: {secs:.2f}s ahead"
+        if ms < 0:
+            return f"Subtitle Offset: {secs:.2f}s behind"
+        return "Subtitle Offset: 0.00s"
+
+    def _apply_video_ui_scale(self):
+        s = self.video_ui_scale
+        self.transport_bar.set_scale(s)
+        self.subtitle_label.set_preferred_point_size(20.0 * s)
+        self.subtitle_label.setFixedHeight(int(80 * s))
+        self.video_offset_label.setStyleSheet(
+            f"QLabel {{ color: rgba(255,255,255,160); font-size: {int(11 * s)}px; background: transparent; padding: 2px 0; }}"
+        )
 
     def _reset_zoom(self):
         if hasattr(self, "pdf_controller"):
@@ -2178,7 +2245,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         duration = self.media_player.duration()
         self.transport_bar.set_time(position, duration)
         self.current_source_location = self._fmt_ms(position)
-        self.subtitle_offset_label.setText(f"Subtitle Offset: {self.subtitle_offset_ms / 1000.0:+.2f}s")
+        self.subtitle_offset_label.setText(self._fmt_offset(self.subtitle_offset_ms))
         self._refresh_subtitle_for_position(position)
         self._update_source_summary()
 
@@ -2232,7 +2299,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
     def _adjust_subtitle_offset(self, delta_ms):
         self.video_service.set_offset(self.video_service.subtitle_offset_ms + delta_ms)
         self.subtitle_offset_ms = self.video_service.subtitle_offset_ms
-        offset_text = f"Subtitle Offset: {self.subtitle_offset_ms / 1000.0:+.2f}s"
+        offset_text = self._fmt_offset(self.subtitle_offset_ms)
         self.subtitle_offset_label.setText(offset_text)
         self.video_offset_label.setText(offset_text)
         self._refresh_subtitle_for_position(self.media_player.position())

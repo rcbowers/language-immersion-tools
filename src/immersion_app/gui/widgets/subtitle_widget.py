@@ -93,6 +93,11 @@ class ClickableSubtitleLabel(QLabel):
         subtitle = None if not text else type("_SubtitleText", (), {"text": text, "words": []})()
         self.set_subtitle(subtitle)
 
+    def set_preferred_point_size(self, size: float):
+        self._preferred_subtitle_point_size = max(6.0, size)
+        self._invalidate_layout()
+        self.update()
+
     def highlight_word_range(self, start_index, end_index):
         if not self._words or start_index is None or end_index is None:
             self._highlighted_indices = set()

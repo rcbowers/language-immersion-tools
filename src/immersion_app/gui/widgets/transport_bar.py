@@ -36,6 +36,7 @@ class TransportBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
+        self._scale = 1.0
         self.setFixedHeight(Theme.TRANSPORT_BAR_HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._build_ui()
@@ -261,19 +262,26 @@ class TransportBar(QWidget):
         self.volume_slider.setValue(int(volume * 100))
         self.volume_slider.blockSignals(False)
 
+    def set_scale(self, factor: float):
+        self._scale = max(0.7, min(2.0, factor))
+        self.refresh_theme()
+
     def refresh_theme(self):
+        s = self._scale
+        self.setFixedHeight(int(38 * s))
         self.setStyleSheet(f"""
             QWidget {{
                 background-color: rgba(0, 0, 0, 0.9);
             }}
         """)
+        self.play_pause_button.setFixedSize(int(32 * s), int(32 * s))
         self.play_pause_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {Theme.ACCENT};
                 color: white;
                 border: none;
-                border-radius: 16px;
-                font-size: 14px;
+                border-radius: {int(16 * s)}px;
+                font-size: {int(14 * s)}px;
                 font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
             }}
             QPushButton:hover {{
@@ -283,13 +291,14 @@ class TransportBar(QWidget):
                 background-color: #3d4ed9;
             }}
         """)
+        self.replay_button.setFixedSize(int(28 * s), int(28 * s))
         self.replay_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
                 color: white;
                 border: none;
                 border-radius: 4px;
-                font-size: 16px;
+                font-size: {int(16 * s)}px;
             }}
             QPushButton:hover {{
                 background-color: rgba(255, 255, 255, 0.1);
@@ -298,11 +307,12 @@ class TransportBar(QWidget):
                 background-color: rgba(255, 255, 255, 0.2);
             }}
         """)
+        self.time_label.setFixedWidth(int(110 * s))
         self.time_label.setStyleSheet(f"""
             QLabel {{
                 color: white;
                 font-family: {Theme.FONT_MONO};
-                font-size: 11px;
+                font-size: {int(11 * s)}px;
                 font-weight: {Theme.FONT_WEIGHT_MEDIUM};
             }}
         """)
@@ -327,6 +337,7 @@ class TransportBar(QWidget):
                 border-radius: 2px;
             }}
         """)
+        self.speed_combo.setFixedWidth(int(70 * s))
         self.speed_combo.setStyleSheet(f"""
             QComboBox {{
                 background-color: rgba(255, 255, 255, 0.1);
@@ -335,7 +346,7 @@ class TransportBar(QWidget):
                 border-radius: 4px;
                 padding: 4px 8px;
                 font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: 11px;
+                font-size: {int(11 * s)}px;
                 font-weight: {Theme.FONT_WEIGHT_MEDIUM};
             }}
             QComboBox:hover {{
@@ -358,6 +369,7 @@ class TransportBar(QWidget):
                 border: 1px solid rgba(255, 255, 255, 0.2);
             }}
         """)
+        self.cc_button.setFixedSize(int(32 * s), int(24 * s))
         self.cc_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: rgba(255, 255, 255, 0.1);
@@ -365,7 +377,7 @@ class TransportBar(QWidget):
                 border: 1px solid rgba(255, 255, 255, 0.2);
                 border-radius: 4px;
                 font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                font-size: 10px;
+                font-size: {int(10 * s)}px;
                 font-weight: {Theme.FONT_WEIGHT_BOLD};
             }}
             QPushButton:checked {{
@@ -379,6 +391,7 @@ class TransportBar(QWidget):
         # Usage tracking indicator gets its own style
         is_active = self.usage_tracking_label.text() == "●"
         self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(is_active))
+        self.volume_slider.setFixedWidth(int(80 * s))
         self.volume_slider.setStyleSheet(f"""
             QSlider::groove:horizontal {{
                 background: rgba(255, 255, 255, 0.2);

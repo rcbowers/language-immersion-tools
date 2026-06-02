@@ -24,6 +24,11 @@ class VideoController:
         self.current_video_path = ""
         self.current_subtitle = None
         self._last_playback_activity_time: datetime | None = None
+        self._position_save_timer = QTimer()
+        self._position_save_timer.setInterval(30_000)
+        self._position_save_timer.timeout.connect(self._save_position_periodically)
+        self._pending_restore_ms = 0
+        self._restore_connected = False
 
     def load_video(self, path: str, restore_position_ms: int = 0):
         video_path = Path(path)
@@ -40,9 +45,14 @@ class VideoController:
         if hasattr(self.window, "usage_tracker"):
             self.window.usage_tracker.on_video_loaded(path)
             self.window.usage_tracker.set_video_position_ms(restore_position_ms)
+        if self._restore_connected:
+            self.window.media_player.mediaStatusChanged.disconnect(self._on_restore_status_changed)
+            self._restore_connected = False
+        self._pending_restore_ms = restore_position_ms
         self.window.media_player.setSource(QUrl.fromLocalFile(path))
         if restore_position_ms > 0:
-            QTimer.singleShot(400, lambda: self.window.media_player.setPosition(restore_position_ms))
+            self.window.media_player.mediaStatusChanged.connect(self._on_restore_status_changed)
+            self._restore_connected = True
         auto_srt = find_best_srt_for_video(path)
         if auto_srt:
             self.load_subtitles(auto_srt)
@@ -71,6 +81,7 @@ class VideoController:
             )
 
         save_user_data(self.window.user_data)
+        self._position_save_timer.start()
 
     def load_subtitles(self, srt_path: str):
         try:
@@ -142,7 +153,7 @@ class VideoController:
                         (now - self._last_playback_activity_time).total_seconds() >= 60):
                     self.window.usage_tracker.record_activity()
                     self._last_playback_activity_time = now
-        offset_text = f"Subtitle Offset: {self.video_service.subtitle_offset_ms / 1000.0:+.2f}s"
+        offset_text = self.window._fmt_offset(self.video_service.subtitle_offset_ms)
         self.window.subtitle_offset_label.setText(offset_text)
         self.window.video_offset_label.setText(offset_text)
         self.refresh_subtitle_for_position(position)
@@ -175,3 +186,24 @@ class VideoController:
             self.window.media_player.pause()
         else:
             self.window.media_player.play()
+
+    def _on_restore_status_changed(self, status):
+        if status in (
+            QMediaPlayer.MediaStatus.LoadedMedia,
+            QMediaPlayer.MediaStatus.BufferedMedia,
+        ):
+            self.window.media_player.setPosition(self._pending_restore_ms)
+            self._pending_restore_ms = 0
+            self.window.media_player.mediaStatusChanged.disconnect(self._on_restore_status_changed)
+            self._restore_connected = False
+
+    def _save_position_periodically(self):
+        if not self.current_video_path:
+            return
+        self.window._persist_session()
+        if self.content_browser_manager:
+            position = self.window.media_player.position() if self.window.media_player else 0
+            self.content_browser_manager.update_last_position(
+                self.current_video_path,
+                {"video_position_ms": position}
+            )
