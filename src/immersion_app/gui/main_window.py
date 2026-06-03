@@ -1219,9 +1219,14 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.video_offset_label = QLabel(self._fmt_offset(getattr(self, 'subtitle_offset_ms', 0)))
         self.video_offset_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_offset_label.setStyleSheet(
-            "QLabel { color: rgba(255,255,255,160); font-size: 11px; background: transparent; padding: 2px 0; }"
+            "QLabel { color: rgba(255,255,255,160); font-size: 17px; background: transparent; padding: 2px 0; }"
         )
         layout.addWidget(self.video_offset_label, stretch=0)
+        self.video_offset_label.hide()
+
+        self._offset_hide_timer = QTimer(self)
+        self._offset_hide_timer.setSingleShot(True)
+        self._offset_hide_timer.timeout.connect(self.video_offset_label.hide)
 
         # Transport bar with full controls
         self.transport_bar = TransportBar()
@@ -1336,6 +1341,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         if mode in (WorkspaceMode.PDF, WorkspaceMode.VIDEO):
             self.shortcut_panel.show()
             self.shortcut_panel.position_on_parent()
+            if mode == WorkspaceMode.VIDEO:
+                self.shortcut_panel.set_current_context("", 0, WorkspaceMode.VIDEO)
         else:
             self.shortcut_panel.hide()
 
@@ -2152,7 +2159,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.subtitle_label.set_preferred_point_size(20.0 * s)
         self.subtitle_label.setFixedHeight(int(80 * s))
         self.video_offset_label.setStyleSheet(
-            f"QLabel {{ color: rgba(255,255,255,160); font-size: {int(11 * s)}px; background: transparent; padding: 2px 0; }}"
+            f"QLabel {{ color: rgba(255,255,255,160); font-size: {int(17 * s)}px; background: transparent; padding: 2px 0; }}"
         )
 
     def _reset_zoom(self):
@@ -2302,6 +2309,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         offset_text = self._fmt_offset(self.subtitle_offset_ms)
         self.subtitle_offset_label.setText(offset_text)
         self.video_offset_label.setText(offset_text)
+        self.video_offset_label.show()
+        self._offset_hide_timer.start(5000)
         self._refresh_subtitle_for_position(self.media_player.position())
         self._persist_session()
 
