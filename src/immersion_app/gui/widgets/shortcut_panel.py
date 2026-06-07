@@ -23,6 +23,7 @@ class ShortcutPanel(QWidget):
     quick_add_requested = Signal()
     queue_requested = Signal()
     theme_toggle_requested = Signal()
+    prefetch_toggle_requested = Signal(bool)  # True = enabled, False = disabled
 
     def __init__(self, mode_manager: ModeManager, completion_tracker: CompletionTracker, parent=None):
         # Frameless tool window (like TranslationPopover)
@@ -86,6 +87,12 @@ class ShortcutPanel(QWidget):
         self.theme_button.clicked.connect(self.theme_toggle_requested.emit)
         self.layout.addWidget(self.theme_button)
 
+        self.prefetch_button = QPushButton("⚡ Auto-translate: On")
+        self.prefetch_button.setCheckable(True)
+        self.prefetch_button.setChecked(True)
+        self.prefetch_button.clicked.connect(self._on_prefetch_toggled)
+        self.layout.addWidget(self.prefetch_button)
+
         self.layout.addStretch()
 
         # Store expanded widgets for minimize animation
@@ -95,6 +102,7 @@ class ShortcutPanel(QWidget):
             self.quick_add_button,
             self.queue_button,
             self.theme_button,
+            self.prefetch_button,
         ]
 
     def refresh_theme(self):
@@ -134,6 +142,24 @@ class ShortcutPanel(QWidget):
         self.quick_add_button.setStyleSheet(Theme.get_button_style("secondary"))
         self.queue_button.setStyleSheet(Theme.get_button_style("secondary"))
         self.theme_button.setStyleSheet(Theme.get_button_style("secondary"))
+        self._refresh_prefetch_button_style()
+
+    def set_prefetch_enabled(self, enabled: bool):
+        """Update button state without emitting signal (for loading saved state)."""
+        self.prefetch_button.blockSignals(True)
+        self.prefetch_button.setChecked(enabled)
+        self.prefetch_button.setText("⚡ Auto-translate: On" if enabled else "⚡ Auto-translate: Off")
+        self.prefetch_button.blockSignals(False)
+        self._refresh_prefetch_button_style()
+
+    def _on_prefetch_toggled(self, checked: bool):
+        self.prefetch_button.setText("⚡ Auto-translate: On" if checked else "⚡ Auto-translate: Off")
+        self._refresh_prefetch_button_style()
+        self.prefetch_toggle_requested.emit(checked)
+
+    def _refresh_prefetch_button_style(self):
+        variant = "secondary" if self.prefetch_button.isChecked() else "ghost"
+        self.prefetch_button.setStyleSheet(Theme.get_button_style(variant))
 
     def set_current_context(self, file_path: str, page: int, mode: WorkspaceMode):
         """Update panel for current page/video context."""
@@ -214,7 +240,7 @@ class ShortcutPanel(QWidget):
 
             # Minimum and maximum sizes
             panel_width = max(160, min(panel_width, 240))
-            panel_height = max(220, min(panel_height, 350))
+            panel_height = max(260, min(panel_height, 390))
 
             x = parent_width - panel_width - Theme.SHORTCUT_PANEL_MARGIN
             y = (parent_height - panel_height) // 2
@@ -232,7 +258,7 @@ class ShortcutPanel(QWidget):
 
         # Minimum and maximum sizes
         panel_width = max(160, min(panel_width, 240))
-        panel_height = max(220, min(panel_height, 350))
+        panel_height = max(260, min(panel_height, 390))
 
         self.setFixedSize(panel_width, panel_height)
 

@@ -2,14 +2,41 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
 
-logger = logging.getLogger(__name__)
+from PySide6.QtCore import QRunnable, QThreadPool
 
 from .language_config import DEFAULT_LEARNING_LANGUAGE, DEFAULT_NATIVE_LANGUAGE, normalize_language_code
 from .paths import LEGACY_USER_STATE_PATH, USER_STATE_PATH, ensure_runtime_dirs
+
+logger = logging.getLogger(__name__)
+
+
+class _SaveWorker(QRunnable):
+    def __init__(self, snapshot: dict):
+        super().__init__()
+        self._snapshot = snapshot
+
+    def run(self):
+        try:
+            import time as _time
+            t0 = _time.perf_counter()
+            json_text = json.dumps(self._snapshot, ensure_ascii=False, indent=2)
+            json_ms = (_time.perf_counter() - t0) * 1000
+            size_kb = len(json_text) / 1024
+            if json_ms >= 50:
+                logger.warning("[SAVE-WORKER] json.dumps %.1fms | %.1f KB", json_ms, size_kb)
+            else:
+                logger.debug("[SAVE-WORKER] json.dumps %.1fms | %.1f KB", json_ms, size_kb)
+            temp_path = USER_STATE_PATH.with_suffix(".tmp")
+            temp_path.write_text(json_text, encoding="utf-8")
+            os.replace(temp_path, USER_STATE_PATH)
+            logger.debug("User data saved successfully")
+        except Exception as exc:
+            logger.error("Background save failed: %s", exc)
 
 
 def default_user_data():
@@ -24,6 +51,7 @@ def default_user_data():
             "translation_mode": "online",
             "video_playback_speed": 1.0,
             "theme_mode": "light",
+            "prefetch_enabled": True,
         },
         "last_session": {
             "content_type": "",
@@ -133,13 +161,21 @@ def load_user_data():
 
 
 def save_user_data(payload):
+    import time as _time
     ensure_runtime_dirs()
-    logger.info(f"Saving user data to {USER_STATE_PATH}")
-    logger.debug(
-        f"Save summary: cards_added={payload.get('analytics', {}).get('cards_added_total', 0)}, "
-        f"vocabulary_count={len(payload.get('analytics', {}).get('vocabulary_seen', []))}"
-    )
-    temp_path = USER_STATE_PATH.with_suffix(".tmp")
-    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temp_path, USER_STATE_PATH)
-    logger.debug("User data saved successfully")
+    vocab_len = len(payload.get("analytics", {}).get("vocabulary_seen", []))
+    sessions_len = len(payload.get("usage_time", {}).get("sessions", []))
+    t0 = _time.perf_counter()
+    snapshot = copy.deepcopy(payload)
+    deepcopy_ms = (_time.perf_counter() - t0) * 1000
+    if deepcopy_ms >= 20:
+        logger.warning(
+            "[SAVE] deepcopy %.1fms | vocab=%d sessions=%d",
+            deepcopy_ms, vocab_len, sessions_len,
+        )
+    else:
+        logger.debug(
+            "[SAVE] deepcopy %.1fms | vocab=%d sessions=%d",
+            deepcopy_ms, vocab_len, sessions_len,
+        )
+    QThreadPool.globalInstance().start(_SaveWorker(snapshot))

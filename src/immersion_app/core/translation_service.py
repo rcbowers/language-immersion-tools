@@ -45,7 +45,7 @@ class TranslateTask(QRunnable):
 
 class BatchTranslateSignals(QObject):
     finished = Signal(list, list)
-    failed = Signal(str)
+    failed = Signal(list, str)  # (texts, error message)
 
 
 class BatchTranslateTask(QRunnable):
@@ -69,7 +69,7 @@ class BatchTranslateTask(QRunnable):
         except Exception as exc:
             logger.warning("Batch translation failed: %s", exc, exc_info=True)
             try:
-                self.signals.failed.emit(str(exc))
+                self.signals.failed.emit(self.texts, str(exc))
             except RuntimeError:
                 return
 
@@ -91,6 +91,11 @@ class TranslationService(QObject):
     ):
         super().__init__(parent)
         self._thread_pool = thread_pool or QThreadPool.globalInstance()
+        # Separate limited pool for background prefetch — caps concurrent HTTP requests
+        # to 2 so they don't all start (and timeout) simultaneously, which causes burst
+        # signal floods that delay Qt's video frame delivery callbacks.
+        self._prefetch_pool = QThreadPool()
+        self._prefetch_pool.setMaxThreadCount(2)
         self.learning_language = learning_language
         self.native_language = native_language
         self.translation_mode = mode
@@ -101,6 +106,7 @@ class TranslationService(QObject):
         self._next_translation_request_id = 0
         self._online_backend = None
         self._offline_backend = None
+        self.prefetch_enabled: bool = True
 
     def set_languages(self, learning_language: str, native_language: str):
         self.learning_language = learning_language
@@ -110,6 +116,9 @@ class TranslationService(QObject):
     def set_mode(self, mode: str):
         self.translation_mode = mode
         self.mode_changed.emit(mode)
+
+    def set_prefetch_enabled(self, enabled: bool):
+        self.prefetch_enabled = enabled
 
     def clear_cache(self):
         self.translation_cache.clear()
@@ -152,10 +161,13 @@ class TranslationService(QObject):
         self._translation_requests_by_key[key] = request_id
         task.signals.finished.connect(self._on_translation_done)
         task.signals.failed.connect(self._on_translation_failed)
-        self._thread_pool.start(task)
+        pool = self._thread_pool if visible else self._prefetch_pool
+        pool.start(task)
         return request_id
 
     def prefetch_async(self, texts: list[str]):
+        if not self.prefetch_enabled:
+            return
         texts_to_fetch = []
         for text in texts:
             if not text:
@@ -166,14 +178,16 @@ class TranslationService(QObject):
         if not texts_to_fetch:
             return
         if self.translation_mode == "online":
-            src_lang, dest_lang = self._get_translation_language_codes()
-            task = BatchTranslateTask(texts_to_fetch, src_lang, dest_lang, self._get_translation_backend())
-            task.signals.finished.connect(self._on_batch_translation_done)
-            task.signals.failed.connect(self.batch_failed.emit)
-            self._thread_pool.start(task)
+            # googletrans batch API (list input) always fails — use individual tasks directly
+            for text in texts_to_fetch:
+                self.translate_async(text, visible=False)
             return
-        for text in texts_to_fetch:
-            self.translate_async(text, visible=False)
+        # Offline (MarianMT): genuine batch is efficient
+        src_lang, dest_lang = self._get_translation_language_codes()
+        task = BatchTranslateTask(texts_to_fetch, src_lang, dest_lang, self._get_translation_backend())
+        task.signals.finished.connect(self._on_batch_translation_done)
+        task.signals.failed.connect(self._on_batch_translation_failed)
+        self._thread_pool.start(task)
 
     def is_mode_available(self, mode: str) -> bool:
         if mode == "online":
@@ -241,3 +255,9 @@ class TranslationService(QObject):
         for text, translation in zip(texts, translations):
             self.translation_cache[self._translation_cache_key(text)] = translation
         self.batch_ready.emit(texts, translations)
+
+    def _on_batch_translation_failed(self, texts: list[str], message: str):
+        logger.warning("Batch translation failed, retrying individually: %s", message)
+        self.batch_failed.emit(message)
+        for text in texts:
+            self.translate_async(text, visible=False)

@@ -50,6 +50,7 @@ from immersion_app.core.appearance_manager import AppearanceManager, AppearanceM
 from immersion_app.core.completion_tracker import CompletionTracker
 from immersion_app.core.content_browser_manager import ContentBrowserManager
 from immersion_app.core.preview_generator import PreviewGenerator
+from immersion_app.core.main_thread_monitor import MainThreadBlockDetector
 from immersion_app.core.usage_time_tracker import UsageTimeTracker
 from immersion_app.core.language_config import (
     DEFAULT_LEARNING_LANGUAGE,
@@ -434,6 +435,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.preview_generator = PreviewGenerator(Path.home() / ".lingua-loop" / "data" / "previews")
 
         # Initialize usage time tracker and connect to service signals
+        self._block_detector = MainThreadBlockDetector(parent=self)
+        self._block_detector.start()
         self.usage_tracker = UsageTimeTracker(self.user_data)
         self.activity_analytics = ActivityAnalyticsManager(self.user_data, anki_analytics=self.anki_analytics, parent=self)
         self.pdf_service.document_loaded.connect(self.usage_tracker.on_document_loaded)
@@ -562,6 +565,12 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.shortcut_panel.theme_toggle_requested.connect(
             self.appearance_manager.toggle_mode
         )
+        self.shortcut_panel.prefetch_toggle_requested.connect(self._on_prefetch_toggled)
+
+        # Load and apply saved prefetch preference
+        prefetch_enabled = self.user_data.get("preferences", {}).get("prefetch_enabled", True)
+        self.translation_service.set_prefetch_enabled(prefetch_enabled)
+        self.shortcut_panel.set_prefetch_enabled(prefetch_enabled)
 
         # Connect tracker signals to panel
         self.completion_tracker.completion_changed.connect(
@@ -582,6 +591,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         # Connect mode manager signals
         self.mode_manager.mode_changed.connect(self._on_mode_changed_internal)
         self.mode_manager.mode_transition_failed.connect(self._on_mode_transition_failed)
+
+    def _on_prefetch_toggled(self, enabled: bool):
+        self.translation_service.set_prefetch_enabled(enabled)
+        self.user_data["preferences"]["prefetch_enabled"] = enabled
+        save_user_data(self.user_data)
 
     def _on_appearance_changed(self, mode: str):
         logger.info(f"Appearance changed to {mode}")

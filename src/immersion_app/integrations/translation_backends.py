@@ -14,6 +14,10 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Thread-local storage so each thread pool worker gets its own Translator/httpx.Client.
+# httpx.Client is not safe for concurrent use from multiple threads.
+_online_tls = threading.local()
+
 
 class TranslationBackend(ABC):
     """Abstract base class for translation backends."""
@@ -61,143 +65,169 @@ class OnlineTranslationBackend(TranslationBackend):
     """Google Translate backend for online translation."""
 
     def __init__(self):
-        self._translator = None
         self._is_async = None
+
+    # --- Sync path helpers ---
+
+    def _get_translator(self):
+        """Return a per-thread Translator instance (thread-local, not shared)."""
+        if not hasattr(_online_tls, 'translator') or _online_tls.translator is None:
+            from googletrans import Translator
+            # 2-second read timeout — default is 5s, which means all concurrent
+            # requests timeout simultaneously and flood the main-thread event queue.
+            # Must pass httpx.Timeout (not a float) because googletrans 4.0.0rc1
+            # sets client.timeout directly, bypassing httpx's own float→Timeout
+            # conversion, causing AttributeError('float has no as_dict') on 0.13.x.
+            try:
+                import httpx as _httpx
+                _online_tls.translator = Translator(timeout=_httpx.Timeout(2.0))
+            except TypeError:
+                _online_tls.translator = Translator()
+        return _online_tls.translator
+
+    def _reset_translator(self):
+        """Discard this thread's sync Translator so the next call creates a fresh one."""
+        _online_tls.translator = None
+
+    # --- Async path helpers ---
+
+    def _run_async(self, coro):
+        """Run a coroutine on a persistent per-thread event loop.
+
+        asyncio.run() creates AND tears down a full event loop on every call.
+        The teardown (shutdown_asyncgens, shutdown_default_executor, loop.close)
+        runs pure-Python async cleanup that holds the GIL for hundreds of ms,
+        stalling the Qt main thread.  By keeping one loop alive per worker
+        thread we pay that cost only once.
+        """
+        loop = getattr(_online_tls, 'async_loop', None)
+        if loop is None or loop.is_closed():
+            loop = asyncio.new_event_loop()
+            _online_tls.async_loop = loop
+        return loop.run_until_complete(coro)
+
+    async def _get_tls_async_translator(self):
+        """Return (or lazily create) the per-thread persistent async Translator.
+
+        Creating a new Translator + httpx.AsyncClient on every call then
+        immediately closing it via `async with` is the primary source of
+        per-translation GIL-holding teardown.  We create it once per thread
+        and keep the HTTP connection pool alive.
+        """
+        if getattr(_online_tls, 'async_translator', None) is None:
+            from googletrans import Translator
+            try:
+                import httpx as _httpx
+                t = Translator(timeout=_httpx.Timeout(2.0))
+            except TypeError:
+                t = Translator()
+            # __aenter__ initialises the httpx.AsyncClient inside Translator
+            if hasattr(t, '__aenter__'):
+                await t.__aenter__()
+            _online_tls.async_translator = t
+        return _online_tls.async_translator
+
+    def _reset_async_translator(self):
+        """Close and discard the per-thread async Translator on error."""
+        translator = getattr(_online_tls, 'async_translator', None)
+        if translator is not None and hasattr(translator, '__aexit__'):
+            loop = getattr(_online_tls, 'async_loop', None)
+            if loop and not loop.is_closed():
+                try:
+                    loop.run_until_complete(translator.__aexit__(None, None, None))
+                except Exception:
+                    pass
+        _online_tls.async_translator = None
+
+    # --- Variant detection ---
 
     def _is_async_variant(self):
         """Detect if googletrans is using async variant."""
         if self._is_async is None:
             try:
                 from googletrans import Translator
-                # Check if translate method is async
                 self._is_async = inspect.iscoroutinefunction(Translator.translate)
-            except:
+            except Exception:
                 self._is_async = False
         return self._is_async
+
+    # --- Public translation methods ---
 
     def translate(self, text: str, src_lang: str, dest_lang: str) -> str:
         """Translate using Google Translate API."""
         logger.debug(f"OnlineTranslation request: '{text[:50]}...' [{src_lang} -> {dest_lang}]")
         try:
-            from googletrans import Translator
+            from googletrans import Translator  # noqa: F401 — confirm installed
         except ImportError:
             logger.error("googletrans library not installed")
             raise RuntimeError("googletrans library not installed. Install with: pip install googletrans==4.0.0-rc1")
 
-        # Handle async/sync variants of googletrans
         if self._is_async_variant():
-            # For async variants, create a new translator each time (can't reuse due to context manager)
-            result = asyncio.run(self._translate_async(text, src_lang, dest_lang))
+            try:
+                result = self._run_async(self._translate_async(text, src_lang, dest_lang))
+            except Exception:
+                self._reset_async_translator()
+                raise
             logger.info(f"Online translation completed: '{text[:30]}...' -> '{result[:30]}...'")
             return result
 
-        # For sync variant, reuse the translator instance
-        if self._translator is None:
-            self._translator = Translator()
-
+        # Sync variant — reuse per-thread httpx.Client
         try:
-            result = self._translator.translate(text, src=src_lang, dest=dest_lang)
+            result = self._get_translator().translate(text, src=src_lang, dest=dest_lang)
             translated = self._extract_translation_text(result)
             logger.info(f"Online translation completed: '{text[:30]}...' -> '{translated[:30]}...'")
             return translated
         except Exception as e:
-            logger.error(f"Online translation failed for '{text[:30]}...': {e}", exc_info=True)
+            self._reset_translator()
+            logger.debug(f"Online translation failed for '{text[:30]}...': {e}")
             raise
 
     async def _translate_async(self, text: str, src_lang: str, dest_lang: str) -> str:
-        """Async translation for googletrans async variants."""
-        from googletrans import Translator
-
-        # For async variants, always create a new Translator (they use context managers that close)
-        translator = Translator()
-
-        # Use async context manager if supported
-        if hasattr(translator, '__aenter__'):
-            async with translator as trans:
-                result = await trans.translate(text, src=src_lang, dest=dest_lang)
-                return self._extract_translation_text(result)
-        else:
-            # Otherwise, just await the translate call directly
-            result = await translator.translate(text, src=src_lang, dest=dest_lang)
-            return self._extract_translation_text(result)
+        """Translate using the persistent per-thread Translator (no per-call create/destroy)."""
+        trans = await self._get_tls_async_translator()
+        result = await trans.translate(text, src=src_lang, dest=dest_lang)
+        return self._extract_translation_text(result)
 
     def translate_batch(self, texts: list[str], src_lang: str, dest_lang: str) -> list[str]:
-        """
-        Translate multiple texts in a single batch request.
-        This is much faster than individual requests for prefetching many words.
-
-        Args:
-            texts: List of texts to translate
-            src_lang: Source language code
-            dest_lang: Destination language code
-
-        Returns:
-            List of translated texts in the same order as input
-        """
+        """Translate multiple texts. For online mode individual tasks are used (batch API is unreliable)."""
         if not texts:
             return []
 
         logger.debug(f"Online batch translation: {len(texts)} texts [{src_lang} -> {dest_lang}]")
         try:
-            from googletrans import Translator
+            from googletrans import Translator  # noqa: F401 — confirm installed
         except ImportError:
             logger.error("googletrans library not installed")
             raise RuntimeError("googletrans library not installed. Install with: pip install googletrans==4.0.0-rc1")
 
-        # Handle async/sync variants
         if self._is_async_variant():
-            result = asyncio.run(self._translate_batch_async(texts, src_lang, dest_lang))
+            try:
+                result = self._run_async(self._translate_batch_async(texts, src_lang, dest_lang))
+            except Exception:
+                self._reset_async_translator()
+                raise
             logger.debug(f"Online batch translation completed: {len(result)} translations")
             return result
 
-        # For sync variant, reuse the translator instance
-        if self._translator is None:
-            self._translator = Translator()
-
-        # Google Translate API supports batch translation
+        # Sync variant — reuse per-thread httpx.Client
         try:
-            results = self._translator.translate(texts, src=src_lang, dest=dest_lang)
-
-            # Handle both single result and list of results
+            results = self._get_translator().translate(texts, src=src_lang, dest=dest_lang)
             if not isinstance(results, list):
                 results = [results]
-
             translations = [self._extract_translation_text(r) for r in results]
             logger.debug(f"Online batch translation completed: {len(translations)} translations")
             return translations
         except Exception as e:
-            # Fallback: if batch fails, translate one by one
-            logger.warning(f"Online batch translation failed, falling back to individual requests: {e}")
-            return [self.translate(text, src_lang, dest_lang) for text in texts]
+            self._reset_translator()
+            raise
 
     async def _translate_batch_async(self, texts: list[str], src_lang: str, dest_lang: str) -> list[str]:
-        """Async batch translation for googletrans async variants."""
-        from googletrans import Translator
-
-        # For async variants, create a new Translator each time
-        translator = Translator()
-
-        try:
-            if hasattr(translator, '__aenter__'):
-                async with translator as trans:
-                    results = await trans.translate(texts, src=src_lang, dest=dest_lang)
-
-                    # Handle both single result and list of results
-                    if not isinstance(results, list):
-                        results = [results]
-
-                    return [self._extract_translation_text(r) for r in results]
-            else:
-                results = await translator.translate(texts, src=src_lang, dest=dest_lang)
-
-                if not isinstance(results, list):
-                    results = [results]
-
-                return [self._extract_translation_text(r) for r in results]
-        except Exception as e:
-            # Fallback: if batch fails, translate one by one
-            logger.warning(f"Online async batch translation failed, falling back to individual requests: {e}")
-            return [await self._translate_async(text, src_lang, dest_lang) for text in texts]
+        """Batch translate using the persistent per-thread Translator."""
+        trans = await self._get_tls_async_translator()
+        results = await trans.translate(texts, src=src_lang, dest=dest_lang)
+        if not isinstance(results, list):
+            results = [results]
+        return [self._extract_translation_text(r) for r in results]
 
     def _extract_translation_text(self, result):
         """Extract translated text from googletrans result object."""

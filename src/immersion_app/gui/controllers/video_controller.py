@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+import time as _time
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from PySide6.QtCore import QTimer, Qt, QUrl
 from PySide6.QtMultimedia import QMediaPlayer
@@ -24,6 +28,7 @@ class VideoController:
         self.current_video_path = ""
         self.current_subtitle = None
         self._last_playback_activity_time: datetime | None = None
+        self._last_position_changed_time: float | None = None  # perf_counter timestamp
         self._position_save_timer = QTimer()
         self._position_save_timer.setInterval(30_000)
         self._position_save_timer.timeout.connect(self._save_position_periodically)
@@ -140,6 +145,21 @@ class VideoController:
         self.mining_controller.request_translation(self.window.selection.word)
 
     def on_position_changed(self, position: int):
+        now = _time.perf_counter()
+        is_playing = (
+            self.window.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        )
+        if is_playing:
+            if self._last_position_changed_time is not None:
+                gap_ms = (now - self._last_position_changed_time) * 1000
+                if gap_ms >= 1000:
+                    logger.error("[VIDEO] positionChanged gap %.0fms — media player stalled", gap_ms)
+                elif gap_ms >= 300:
+                    logger.warning("[VIDEO] positionChanged gap %.0fms", gap_ms)
+            self._last_position_changed_time = now
+        else:
+            self._last_position_changed_time = None
+
         if not self.window._is_slider_dragging:
             self.window.transport_bar.set_position(position)
         duration = self.window.media_player.duration()
@@ -199,10 +219,26 @@ class VideoController:
     def _save_position_periodically(self):
         if not self.current_video_path:
             return
+        t0 = _time.perf_counter()
         self.window._persist_session()
+        persist_ms = (_time.perf_counter() - t0) * 1000
+        update_ms = 0.0
         if self.content_browser_manager:
+            t1 = _time.perf_counter()
             position = self.window.media_player.position() if self.window.media_player else 0
             self.content_browser_manager.update_last_position(
                 self.current_video_path,
                 {"video_position_ms": position}
+            )
+            update_ms = (_time.perf_counter() - t1) * 1000
+        total_ms = persist_ms + update_ms
+        if total_ms >= 20:
+            logger.warning(
+                "[PERIODIC-SAVE] persist=%.1fms update_pos=%.1fms total=%.1fms",
+                persist_ms, update_ms, total_ms,
+            )
+        else:
+            logger.debug(
+                "[PERIODIC-SAVE] persist=%.1fms update_pos=%.1fms total=%.1fms",
+                persist_ms, update_ms, total_ms,
             )
