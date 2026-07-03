@@ -354,6 +354,32 @@ class QueueDialog(QDialog):
             )
 
 
+class _StartupOverlay(QWidget):
+    """Full-window overlay that blocks interaction while the session restores."""
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setObjectName("StartupOverlay")
+        self.setStyleSheet("background: rgba(0,0,0,0.45);")
+        label = QLabel("Restoring session…", self)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet("color: white; font-size: 18px; background: transparent;")
+        layout = QVBoxLayout(self)
+        layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignCenter)
+        self._resize_to_parent()
+        self.raise_()
+
+    def _resize_to_parent(self):
+        if self.parent():
+            self.setGeometry(self.parent().rect())
+
+    def resizeEvent(self, event):
+        self._resize_to_parent()
+
+    def mousePressEvent(self, event): event.accept()
+    def mouseReleaseEvent(self, event): event.accept()
+    def keyPressEvent(self, event): event.accept()
+
+
 class UnifiedSentenceMinerWindow(QMainWindow):
     SUPPORTED_CONTENT_FILTER = "Content Files (*.pdf *.mp4 *.mkv *.avi *.mov *.webm)"
 
@@ -496,10 +522,32 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.anki_analytics.stats_changed.connect(self.activity_analytics.refresh)
         self._determine_translation_mode()
         self._refresh_anki_status()
+        self._apply_theme(refresh_pdf=False)
+        self._startup_overlay = _StartupOverlay(self)
+        self._startup_overlay.show()
+        QTimer.singleShot(0, self._deferred_startup)
+
+    def _deferred_startup(self):
         self.workspace_controller.restore_last_session()
         self._refresh_queue_summary()
         self._update_command_bar_stats()
-        self._apply_theme(refresh_pdf=False)
+        self._startup_overlay.deleteLater()
+        self._startup_overlay = None
+
+    def _ensure_media_player(self):
+        """Lazily create QMediaPlayer the first time a video is loaded."""
+        if self.media_player is not None:
+            return
+        logger.info("Creating QMediaPlayer (QT_MEDIA_BACKEND=%s)", os.environ.get("QT_MEDIA_BACKEND", "not set"))
+        self.media_player = QMediaPlayer(self)
+        self.audio_output = QAudioOutput(self)
+        self.media_player.setAudioOutput(self.audio_output)
+        self.media_player.setVideoOutput(self.video_widget)
+        self.media_player.positionChanged.connect(self._on_position_changed)
+        self.media_player.durationChanged.connect(self._on_duration_changed)
+        self.media_player.playbackStateChanged.connect(self._on_playback_state_changed)
+        self.media_player.errorOccurred.connect(self._on_media_error)
+        self.media_player.mediaStatusChanged.connect(self._on_media_status_changed)
 
     def _build_ui(self):
         # Create main container
@@ -1195,6 +1243,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.pdf_status_bar.fit_width_clicked.connect(self._fit_width)
         self.pdf_status_bar.reset_zoom_clicked.connect(self._reset_zoom)
         self.pdf_status_bar.anki_status_clicked.connect(self._refresh_anki_status)
+        self.pdf_status_bar.translation_mode_clicked.connect(self._toggle_translation_mode)
         page_layout.addWidget(self.pdf_status_bar)
 
         return page
@@ -1257,18 +1306,6 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.play_pause_button = self.transport_bar.play_pause_button
         self.position_slider = self.transport_bar.position_slider
         self.time_label = self.transport_bar.time_label
-
-        # Media player setup
-        logger.info(f"Creating QMediaPlayer (QT_MEDIA_BACKEND={os.environ.get('QT_MEDIA_BACKEND', 'not set')})")
-        self.media_player = QMediaPlayer(self)
-        self.audio_output = QAudioOutput(self)
-        self.media_player.setAudioOutput(self.audio_output)
-        self.media_player.setVideoOutput(self.video_widget)
-        self.media_player.positionChanged.connect(self._on_position_changed)
-        self.media_player.durationChanged.connect(self._on_duration_changed)
-        self.media_player.playbackStateChanged.connect(self._on_playback_state_changed)
-        self.media_player.errorOccurred.connect(self._on_media_error)
-        self.media_player.mediaStatusChanged.connect(self._on_media_status_changed)
 
         return page
 
@@ -2234,6 +2271,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         if not cleaned_words:
             return
         self.selection.word = " ".join(cleaned_words)
+        if len(selected_indices) == 1:
+            translation_text = self.selection.word
+        else:
+            first, last = selected_indices[0], selected_indices[-1]
+            translation_text = self.current_subtitle.text[words[first].start:words[last].end].strip()
         self.selection.sentence = self.current_subtitle.text
         self.selection.video.selected_indices = list(selected_indices)
         self.selection.pdf.selected_words = []
@@ -2241,7 +2283,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.subtitle_label.highlight_word_range(selected_indices[0], selected_indices[-1])
         self._update_selection_panel()
         self._update_action_buttons()
-        self._request_translation(self.selection.word)
+        self._request_translation(translation_text)
 
     def _resolve_selected_subtitle_indices(self, token_index, shift_pressed, token_count):
         subtitle_index = self.current_subtitle.index if self.current_subtitle else -1

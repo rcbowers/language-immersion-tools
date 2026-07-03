@@ -40,6 +40,7 @@ class PDFStatusBar(QWidget):
     fit_width_clicked = Signal()
     reset_zoom_clicked = Signal()
     anki_status_clicked = Signal()
+    translation_mode_clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -111,8 +112,11 @@ class PDFStatusBar(QWidget):
         self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(active=False))
         right_layout.addWidget(self.usage_tracking_label, alignment=Qt.AlignmentFlag.AlignVCenter)
 
-        self.translation_mode_label = QLabel("Translation: Offline")
-        self.translation_mode_label.setStyleSheet(self._get_badge_style())
+        self.translation_mode_label = ClickableStatusLabel("Translation: Offline")
+        self.translation_mode_label.set_clickable(True)
+        self.translation_mode_label.setToolTip("Click to toggle online/offline translation")
+        self.translation_mode_label.clicked.connect(self.translation_mode_clicked.emit)
+        self.translation_mode_label.setStyleSheet(self._get_clickable_badge_style())
         right_layout.addWidget(self.translation_mode_label, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self.anki_status_label = ClickableStatusLabel("Anki: Checking...")
@@ -201,6 +205,22 @@ class PDFStatusBar(QWidget):
             }}
         """
 
+    def _get_clickable_badge_style(self) -> str:
+        return f"""
+            QLabel {{
+                color: {Theme.TEXT_SOFT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 11px;
+                font-weight: {Theme.FONT_WEIGHT_MEDIUM};
+                padding: 3px 8px;
+                border-radius: 4px;
+                background-color: {Theme.SURFACE_ALT};
+            }}
+            QLabel:hover {{
+                background-color: {Theme.BORDER};
+            }}
+        """
+
     def _get_usage_tracking_style(self, active: bool) -> str:
         """Get style for usage tracking indicator."""
         color = "#4CAF50" if active else Theme.TEXT_MUTED  # Green when active, muted when idle
@@ -263,7 +283,7 @@ class PDFStatusBar(QWidget):
                 font-weight: {Theme.FONT_WEIGHT_REGULAR};
             }}
         """)
-        self.translation_mode_label.setStyleSheet(self._get_badge_style())
+        self.translation_mode_label.setStyleSheet(self._get_clickable_badge_style())
         self.anki_status_label.setStyleSheet(self._get_badge_style())
         # Usage tracking indicator gets its own style
         is_active = self.usage_tracking_label.text() == "●"

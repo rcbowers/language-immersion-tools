@@ -54,6 +54,7 @@ class VideoController:
             self.window.media_player.mediaStatusChanged.disconnect(self._on_restore_status_changed)
             self._restore_connected = False
         self._pending_restore_ms = restore_position_ms
+        self.window._ensure_media_player()
         self.window.media_player.setSource(QUrl.fromLocalFile(path))
         if restore_position_ms > 0:
             self.window.media_player.mediaStatusChanged.connect(self._on_restore_status_changed)
@@ -134,15 +135,23 @@ class VideoController:
         cleaned_words = [self.window._clean_word(words[idx].word) for idx in selected_indices if self.window._clean_word(words[idx].word)]
         if not cleaned_words:
             return
+        display_word = " ".join(cleaned_words)
+        # For phrases, extract the span from the raw subtitle text so punctuation is preserved.
+        # Single-word lookups use the cleaned form (no trailing comma/period).
+        if len(selected_indices) == 1:
+            translation_text = display_word
+        else:
+            first, last = selected_indices[0], selected_indices[-1]
+            translation_text = self.current_subtitle.text[words[first].start:words[last].end].strip()
         self.window.selection.set_video_selection(
-            word=" ".join(cleaned_words),
+            word=display_word,
             sentence=self.current_subtitle.text,
             selected_indices=list(selected_indices),
             anchor=anchor,
         )
         self.window.current_source_location = self.window._fmt_ms(self.window.media_player.position())
         self.window.subtitle_label.highlight_word_range(selected_indices[0], selected_indices[-1])
-        self.mining_controller.request_translation(self.window.selection.word)
+        self.mining_controller.request_translation(translation_text)
 
     def on_position_changed(self, position: int):
         now = _time.perf_counter()

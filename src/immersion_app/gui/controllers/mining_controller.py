@@ -20,6 +20,7 @@ class MiningController(QObject):
         self.anki_service = anki_service
         self.anki_analytics = anki_analytics
         self.current_request_id = 0
+        self._pending_translation_text = ""
 
         self.selection.selection_changed.connect(self.window._update_selection_panel)
         self.selection.selection_changed.connect(self.window._update_action_buttons)
@@ -36,6 +37,7 @@ class MiningController(QObject):
     def request_translation(self, text: str):
         if not text:
             return
+        self._pending_translation_text = text
         cached = self.translation_service.cached_translation(text)
         if cached is not None:
             self.selection.set_translation(cached)
@@ -133,7 +135,7 @@ class MiningController(QObject):
             return
         if request_id and request_id != self.current_request_id:
             return
-        if source_text != self.selection.word:
+        if source_text != self._pending_translation_text:
             return
         self.selection.set_translation(translated_text)
 
@@ -142,7 +144,7 @@ class MiningController(QObject):
             return
         if request_id and request_id != self.current_request_id:
             return
-        if source_text != self.selection.word:
+        if source_text != self._pending_translation_text:
             return
         self.selection.set_translation_error(error_message)
         self.window._set_status(f"Translation failed: {error_message}")

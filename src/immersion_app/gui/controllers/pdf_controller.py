@@ -144,16 +144,23 @@ class PDFController:
         cleaned_words = [self.window._clean_word(selected[4]) for selected in selected_words if self.window._clean_word(selected[4])]
         if not cleaned_words:
             return
+        display_word = " ".join(cleaned_words)
+        # For phrases, join raw PDF tokens (which retain attached punctuation like "Bueno,")
+        # so the translation model receives properly punctuated input.
+        if len(selected_words) == 1:
+            translation_text = display_word
+        else:
+            translation_text = " ".join(w[4] for w in selected_words).strip()
         self.selection.pdf.anchor_key = anchor_key
         self.selection.set_pdf_selection(
-            word=" ".join(cleaned_words),
+            word=display_word,
             sentence=self.pdf_service.extract_context(selected_words, self.page_line_words),
             selected_words=list(selected_words),
             highlight_bboxes=self.pdf_service.merge_highlight_bboxes(selected_words),
         )
         self.window.current_source_location = f"Page {self.current_page_index + 1}"
         self.render_current_page()
-        self.mining_controller.request_translation(self.selection.word)
+        self.mining_controller.request_translation(translation_text)
 
     def hover_at(self, point, modifiers):
         if not (modifiers & Qt.KeyboardModifier.ControlModifier):
