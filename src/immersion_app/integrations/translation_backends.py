@@ -80,9 +80,15 @@ class OnlineTranslationBackend(TranslationBackend):
             # conversion, causing AttributeError('float has no as_dict') on 0.13.x.
             try:
                 import httpx as _httpx
-                _online_tls.translator = Translator(timeout=_httpx.Timeout(2.0))
+                # googletrans otherwise converts non-200 responses into a
+                # synthetic result whose text is the original input.  That is
+                # indistinguishable from a real translation to callers and can
+                # silently put the source word on an Anki card's back.
+                _online_tls.translator = Translator(
+                    timeout=_httpx.Timeout(2.0), raise_exception=True
+                )
             except TypeError:
-                _online_tls.translator = Translator()
+                _online_tls.translator = Translator(raise_exception=True)
         return _online_tls.translator
 
     def _reset_translator(self):
@@ -118,9 +124,9 @@ class OnlineTranslationBackend(TranslationBackend):
             from googletrans import Translator
             try:
                 import httpx as _httpx
-                t = Translator(timeout=_httpx.Timeout(2.0))
+                t = Translator(timeout=_httpx.Timeout(2.0), raise_exception=True)
             except TypeError:
-                t = Translator()
+                t = Translator(raise_exception=True)
             # __aenter__ initialises the httpx.AsyncClient inside Translator
             if hasattr(t, '__aenter__'):
                 await t.__aenter__()

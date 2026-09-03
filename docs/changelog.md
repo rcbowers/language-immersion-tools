@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-02
+
+### Improved Automatic Miner
+
+- Starts Anki automatically when it is not already running, then waits for AnkiConnect before mining.
+- Adds keyboard context-window editing during review: `,`/`.` move the start one word, and `<`/`>` move the end one word without excluding the mined phrase.
+- Shows up to five words before and after the active context window in gray on the same `front:` line; those words can be added to the card context with the window controls.
+- Updates the Google Translate dependency pins to a compatible modern `googletrans`/`httpx` stack, fixing the `httpcore.SyncHTTPTransport` import failure.
+- Surfaces Google Translate HTTP failures instead of accepting `googletrans`'s source-text fallback, so auto-miner cannot create a card with an untranslated back.
+- Falls back to the local MarianMT translator for the rest of an auto-miner session after Google Translate fails; its model is downloaded only when needed.
+
 ## 2026-05-12
 
 ### Added Content Browser to Welcome Page

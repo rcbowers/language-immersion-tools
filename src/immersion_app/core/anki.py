@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import shutil
+import subprocess
+import time
 import urllib.error
 import urllib.request
 
@@ -14,6 +18,86 @@ logger = logging.getLogger(__name__)
 DECK_NAME = "2025 Spanish Immersion"
 MODEL_NAME = "Basic"
 ANKI_CONNECT_URL = "http://localhost:8765"
+DEFAULT_ANKI_PATH = r"%LOCALAPPDATA%\Programs\Anki\anki.exe"
+ANKI_STARTUP_TIMEOUT_SECONDS = 20.0
+ANKI_STARTUP_POLL_SECONDS = 0.5
+
+
+def start_anki_if_needed() -> bool:
+    """Start Anki when neither AnkiConnect nor an Anki process is available.
+
+    Returns ``True`` only if this call launched Anki.  A running Anki process is
+    left alone even when AnkiConnect is unavailable, so an extension/configuration
+    issue is reported by the usual connection check instead of launching a second
+    copy of Anki.
+    """
+    if _anki_connect_is_available() or _anki_process_is_running():
+        return False
+
+    executable = _find_anki_executable()
+    if executable is None:
+        raise FileNotFoundError(
+            "Anki is not running and its executable could not be found. "
+            "Set ANKI_PATH or install Anki in its default location."
+        )
+    try:
+        subprocess.Popen(
+            [str(executable)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"Unable to start Anki at {executable}: {exc}") from exc
+
+    deadline = time.monotonic() + ANKI_STARTUP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if _anki_connect_is_available():
+            return True
+        time.sleep(ANKI_STARTUP_POLL_SECONDS)
+    raise ConnectionError(
+        "Anki was started, but AnkiConnect did not become available within "
+        f"{ANKI_STARTUP_TIMEOUT_SECONDS:g} seconds."
+    )
+
+
+def _anki_connect_is_available() -> bool:
+    try:
+        anki_connect_invoke("version")
+    except (ConnectionError, RuntimeError):
+        return False
+    return True
+
+
+def _anki_process_is_running() -> bool:
+    """Return whether a local Anki desktop process is already running."""
+    try:
+        import psutil
+    except ImportError:  # pragma: no cover - psutil is a declared dependency
+        return False
+    for process in psutil.process_iter(["name"]):
+        try:
+            if (process.info["name"] or "").lower() in {"anki", "anki.exe"}:
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return False
+
+
+def _find_anki_executable() -> str | None:
+    """Find a Windows Anki executable, honoring an explicit ``ANKI_PATH`` first."""
+    configured = os.environ.get("ANKI_PATH")
+    candidates = [configured] if configured else []
+    candidates.extend(
+        [
+            DEFAULT_ANKI_PATH,
+            r"C:\Program Files\Anki\anki.exe",
+            r"C:\Program Files (x86)\Anki\anki.exe",
+        ]
+    )
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return shutil.which("anki") or shutil.which("anki.exe")
 
 
 def anki_connect_request(action, **params):
