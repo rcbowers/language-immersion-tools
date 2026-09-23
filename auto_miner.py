@@ -7,8 +7,11 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import sys
 from typing import Callable, Iterable, Sequence
+import unicodedata
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -39,7 +42,14 @@ from immersion_app.integrations.translation_backends import (
 from immersion_app.media.source_context import load_source_contexts
 
 
-DEFAULT_INPUT_FILE = "automine_inputs.txt"
+# Keep the bundled queue available regardless of the directory from which the
+# command is launched. Explicit input-file arguments remain relative to the
+# caller's current directory.
+DEFAULT_INPUT_FILE = PROJECT_ROOT / "automine_inputs.txt"
+CARD_MIN_CONTENT_WIDTH = 40
+CARD_MAX_CONTENT_WIDTH = 72
+CARD_VERTICAL_PADDING = 2
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 RECENT_SOURCES_PATH = PROJECT_ROOT / "data" / "state" / "automine_recent_sources.json"
 MAX_RECENT_SOURCES = 10
 
@@ -276,6 +286,133 @@ def _edit_translation(initial: str) -> str:
             redraw()
 
 
+EDITOR_HEADER_LINE_COUNT = 3
+
+
+def _decode_editor_key(getwch: Callable[[], str]) -> str:
+    """Read one keystroke and resolve it to an editor key name or literal character."""
+    key = getwch()
+    if key in ("\x00", "\xe0"):
+        command = getwch()
+        return {
+            "K": "left",
+            "M": "right",
+            "H": "up",
+            "P": "down",
+            "G": "home",
+            "O": "end",
+            "S": "delete",
+        }.get(command, "")
+    if key == "\r":
+        return "enter"
+    if key in ("\x08", "\x7f"):
+        return "backspace"
+    if key == "\x13":
+        return "save"
+    return key
+
+
+def _apply_editor_key(
+    lines: list[str], row: int, col: int, key: str
+) -> tuple[list[str], int, int]:
+    """Apply one editor key to the text buffer, returning the updated buffer and cursor."""
+    if key == "enter":
+        current = lines[row]
+        lines[row : row + 1] = [current[:col], current[col:]]
+        return lines, row + 1, 0
+    if key == "backspace":
+        if col > 0:
+            lines[row] = lines[row][: col - 1] + lines[row][col:]
+            return lines, row, col - 1
+        if row > 0:
+            merged_col = len(lines[row - 1])
+            lines[row - 1] += lines[row]
+            del lines[row]
+            return lines, row - 1, merged_col
+        return lines, row, col
+    if key == "delete":
+        if col < len(lines[row]):
+            lines[row] = lines[row][:col] + lines[row][col + 1 :]
+        elif row < len(lines) - 1:
+            lines[row] += lines[row + 1]
+            del lines[row + 1]
+        return lines, row, col
+    if key == "left":
+        if col > 0:
+            return lines, row, col - 1
+        if row > 0:
+            return lines, row - 1, len(lines[row - 1])
+        return lines, row, col
+    if key == "right":
+        if col < len(lines[row]):
+            return lines, row, col + 1
+        if row < len(lines) - 1:
+            return lines, row + 1, 0
+        return lines, row, col
+    if key == "up":
+        if row > 0:
+            return lines, row - 1, min(col, len(lines[row - 1]))
+        return lines, row, col
+    if key == "down":
+        if row < len(lines) - 1:
+            return lines, row + 1, min(col, len(lines[row + 1]))
+        return lines, row, col
+    if key == "home":
+        return lines, row, 0
+    if key == "end":
+        return lines, row, len(lines[row])
+    if len(key) == 1 and key.isprintable():
+        lines[row] = lines[row][:col] + key + lines[row][col:]
+        return lines, row, col + 1
+    return lines, row, col
+
+
+def _move_cursor(row: int, col: int) -> None:
+    sys.stdout.write(f"\033[{row};{col}H")
+    sys.stdout.flush()
+
+
+def edit_input_file(
+    path: Path,
+    *,
+    read_key: Callable[[], str] | None = None,
+    print_fn: Callable[..., None] = print,
+    clear_screen: Callable[[], None] = _clear_screen,
+    move_cursor: Callable[[int, int], None] = _move_cursor,
+) -> None:
+    """Open a terminal editor pre-filled with *path*'s contents; Ctrl+S saves and returns."""
+    if read_key is None:
+        if os.name != "nt":
+            raise RuntimeError("auto_miner requires a Windows interactive terminal to edit the queue.")
+        import msvcrt
+
+        read_key = lambda: _decode_editor_key(msvcrt.getwch)
+
+    initial = path.read_text(encoding="utf-8-sig") if path.is_file() else ""
+    lines = initial.split("\n") if initial else [""]
+    row, col = len(lines) - 1, len(lines[-1])
+
+    def redraw() -> None:
+        clear_screen()
+        print_fn("Edit automine_inputs.txt — one phrase to mine per line.")
+        print_fn("Arrows: move   Enter: new line   Backspace: delete   Ctrl+S: save and start mining")
+        print_fn()
+        for line in lines:
+            print_fn(line)
+        move_cursor(EDITOR_HEADER_LINE_COUNT + row + 1, col + 1)
+
+    redraw()
+    while True:
+        key = read_key()
+        if key == "save":
+            break
+        lines, row, col = _apply_editor_key(lines, row, col, key)
+        redraw()
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _display_front(candidate: MiningCandidate, context: str) -> str:
     highlighted = f"\033[31m[{candidate.matched_text}]\033[0m"
     return context.replace(candidate.matched_text, highlighted, 1)
@@ -287,13 +424,86 @@ def _display_context_window(candidate: MiningCandidate, bounds: tuple[int, int])
     context = render_context_window(candidate, bounds)
     gray = "\033[90m"
     reset = "\033[0m"
-    parts = ["front:"]
+    parts = []
     if before:
         parts.append(f"{gray}{before}{reset}")
     parts.append(_display_front(candidate, context))
     if after:
         parts.append(f"{gray}{after}{reset}")
     return " ".join(parts)
+
+
+def _display_width(text: str) -> int:
+    """Return terminal columns occupied by text, ignoring ANSI formatting."""
+    width = 0
+    for character in ANSI_ESCAPE_PATTERN.sub("", text):
+        if unicodedata.combining(character):
+            continue
+        width += 2 if unicodedata.east_asian_width(character) in {"F", "W"} else 1
+    return width
+
+
+def _wrap_card_text(text: str, width: int) -> list[str]:
+    """Wrap ANSI-styled text without counting its escape sequences as columns."""
+    lines: list[str] = []
+    line = ""
+    line_width = 0
+    pending_space = False
+    tokens = re.findall(r"\x1b\[[0-?]*[ -/]*[@-~]|\s+|[^\s]", text)
+
+    for token in tokens:
+        if ANSI_ESCAPE_PATTERN.fullmatch(token):
+            line += token
+            continue
+        if token.isspace():
+            pending_space = bool(line)
+            continue
+
+        character_width = _display_width(token)
+        separator_width = 1 if pending_space and line_width else 0
+        if line_width and line_width + separator_width + character_width > width:
+            lines.append(line)
+            line = ""
+            line_width = 0
+            pending_space = False
+            separator_width = 0
+        if pending_space and line_width:
+            line += " "
+            line_width += 1
+        line += token
+        line_width += character_width
+        pending_space = False
+
+    if line or not lines:
+        lines.append(line)
+    return lines
+
+
+def _card_content_width(front: str, back: str) -> int:
+    """Choose a readable card width that stays within the current terminal."""
+    terminal_width = shutil.get_terminal_size(fallback=(80, 24)).columns
+    maximum = min(CARD_MAX_CONTENT_WIDTH, max(20, terminal_width - 4))
+    minimum = min(CARD_MIN_CONTENT_WIDTH, maximum)
+    longest_line = max(
+        (_display_width(line) for text in (front, back) for line in text.splitlines()),
+        default=0,
+    )
+    return min(maximum, max(minimum, longest_line))
+
+
+def render_anki_card_preview(front: str, back: str) -> str:
+    """Render the proposed front and back as a compact terminal Anki card."""
+    content_width = _card_content_width(front, back)
+    border = "-" * (content_width + 4)
+    lines = [border]
+    for label, text in (("front", front), ("back", back)):
+        lines.extend(f"| {' ' * content_width} |" for _ in range(CARD_VERTICAL_PADDING))
+        for content_line in _wrap_card_text(f"{label}: {text}", content_width):
+            padding = " " * (content_width - _display_width(content_line))
+            lines.append(f"| {content_line}{padding} |")
+        lines.extend(f"| {' ' * content_width} |" for _ in range(CARD_VERTICAL_PADDING))
+    lines.append(border)
+    return "\n".join(lines)
 
 
 def review_candidates(
@@ -319,8 +529,12 @@ def review_candidates(
         if candidate.matched_text not in translations:
             translations[candidate.matched_text] = translate(candidate.matched_text)
         clear_screen()
-        print_fn(_display_context_window(candidate, bounds))
-        print_fn(f"back: {translations[candidate.matched_text]}")
+        print_fn(
+            render_anki_card_preview(
+                _display_context_window(candidate, bounds),
+                translations[candidate.matched_text],
+            )
+        )
         print_fn()
         print_fn(f"Source: {candidate.source_name} {candidate.location}")
         if queue_position is not None and queue_total is not None:
@@ -353,6 +567,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("Error: auto_miner must be run in an interactive terminal.", file=sys.stderr)
         return 1
     try:
+        edit_input_file(args.input_file)
         if args.source_document is None:
             args.source_document = prompt_for_source_document(load_recent_sources())
         queries = load_queries(args.input_file)

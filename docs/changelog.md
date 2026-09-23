@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-23
+
+### Added In-Terminal Queue Editor to Automatic Miner
+
+- Launching `auto_miner.py` now opens a terminal text editor pre-filled with `automine_inputs.txt`, instead of requiring the queue to be edited separately before running.
+- Supports typing, arrow-key navigation, and Enter for new lines; Ctrl+S saves the queue and transitions straight into mining.
+
+## 2026-09-07
+
+### Improved Automatic Miner Card Preview
+
+- Renders the proposed front and back in a bordered, Anki-style terminal card during interactive review.
+- Wraps long content to a responsive card width while preserving ANSI highlighting and geometric alignment.
+
 ## 2026-09-02
 
 ### Improved Automatic Miner

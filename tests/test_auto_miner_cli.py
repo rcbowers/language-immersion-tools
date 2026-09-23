@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import auto_miner
@@ -11,7 +12,7 @@ def _candidate(text="Hola mundo."):
 def test_parse_args_uses_default_input_file_for_one_path():
     args = auto_miner.parse_args(["source.pdf"])
 
-    assert args.input_file == Path("automine_inputs.txt")
+    assert args.input_file == auto_miner.PROJECT_ROOT / "automine_inputs.txt"
     assert args.source_document == Path("source.pdf")
     assert args.source_lang == "es"
     assert args.target_lang == "en"
@@ -20,7 +21,7 @@ def test_parse_args_uses_default_input_file_for_one_path():
 def test_parse_args_leaves_source_document_none_when_omitted():
     args = auto_miner.parse_args([])
 
-    assert args.input_file == Path("automine_inputs.txt")
+    assert args.input_file == auto_miner.PROJECT_ROOT / "automine_inputs.txt"
     assert args.source_document is None
 
 
@@ -225,11 +226,102 @@ def test_review_displays_context_outside_the_window_in_gray():
         clear_screen=lambda: None,
     )
 
-    rendered_front = [line for line in output if line.startswith("front:")][-1]
+    rendered_card = [line for line in output if line.startswith("-")][-1]
 
-    assert rendered_front.startswith("front: \033[90mUno\033[0m \033[31m[Hola]\033[0m")
-    assert rendered_front.endswith("\033[90mtres.\033[0m")
-    assert "\n" not in rendered_front
+    visible_card = auto_miner.ANSI_ESCAPE_PATTERN.sub("", rendered_card)
+
+    assert "| front: Uno [Hola] tres." in visible_card
+    assert "\033[90m" in rendered_card
+    assert "\033[31m" in rendered_card
+    assert "[Hola]\033[0m" in rendered_card
+    assert "| back: Hola" in rendered_card
+
+
+def test_anki_card_preview_has_a_consistent_border_and_wraps_long_text(monkeypatch):
+    monkeypatch.setattr(
+        auto_miner.shutil,
+        "get_terminal_size",
+        lambda fallback: os.terminal_size((50, 24)),
+    )
+
+    preview = auto_miner.render_anki_card_preview(
+        "A sentence with enough words to wrap around the fixed card width.",
+        "A translation with enough words to wrap around the fixed card width.",
+    )
+    lines = preview.splitlines()
+    visible_lines = [auto_miner.ANSI_ESCAPE_PATTERN.sub("", line) for line in lines]
+
+    assert visible_lines[0] == visible_lines[-1]
+    assert set(visible_lines[0]) == {"-"}
+    assert all(len(line) == len(visible_lines[0]) for line in visible_lines)
+    assert all(line.startswith("| ") and line.endswith(" |") for line in visible_lines[1:-1])
+    assert any("front: A sentence" in line for line in visible_lines)
+    assert any("back: A translation" in line for line in visible_lines)
+
+
+def test_decode_editor_key_resolves_arrow_and_control_sequences():
+    keys = iter(["\xe0", "K", "\x00", "M", "\r", "\x08", "\x13", "a"])
+    read = lambda: next(keys)
+
+    decoded = [auto_miner._decode_editor_key(read) for _ in range(6)]
+
+    assert decoded == ["left", "right", "enter", "backspace", "save", "a"]
+
+
+def test_apply_editor_key_inserts_moves_and_splits_lines():
+    lines, row, col = auto_miner._apply_editor_key(["ab"], 0, 1, "x")
+    assert (lines, row, col) == (["axb"], 0, 2)
+
+    lines, row, col = auto_miner._apply_editor_key(["axb"], 0, 3, "enter")
+    assert (lines, row, col) == (["axb", ""], 1, 0)
+
+    lines, row, col = auto_miner._apply_editor_key(["axb", "c"], 1, 0, "backspace")
+    assert (lines, row, col) == (["axbc"], 0, 3)
+
+    lines, row, col = auto_miner._apply_editor_key(["axbc"], 0, 4, "left")
+    assert (lines, row, col) == (["axbc"], 0, 3)
+
+    lines, row, col = auto_miner._apply_editor_key(["axbc"], 0, 3, "delete")
+    assert (lines, row, col) == (["axb"], 0, 3)
+
+
+def test_apply_editor_key_up_and_down_clamp_column_to_line_length():
+    lines, row, col = auto_miner._apply_editor_key(["uno", "do"], 0, 3, "down")
+    assert (lines, row, col) == (["uno", "do"], 1, 2)
+
+    lines, row, col = auto_miner._apply_editor_key(["uno", "do"], 1, 2, "up")
+    assert (lines, row, col) == (["uno", "do"], 0, 2)
+
+
+def test_edit_input_file_writes_typed_text_on_save(tmp_path):
+    queue = tmp_path / "automine_inputs.txt"
+    queue.write_text("uno", encoding="utf-8")
+    keys = iter(["end", "enter", "d", "o", "s", "save"])
+
+    auto_miner.edit_input_file(
+        queue,
+        read_key=lambda: next(keys),
+        print_fn=lambda *_: None,
+        clear_screen=lambda: None,
+        move_cursor=lambda *_: None,
+    )
+
+    assert queue.read_text(encoding="utf-8") == "uno\ndos"
+
+
+def test_edit_input_file_starts_empty_when_queue_file_is_missing(tmp_path):
+    queue = tmp_path / "automine_inputs.txt"
+    keys = iter(["u", "n", "o", "save"])
+
+    auto_miner.edit_input_file(
+        queue,
+        read_key=lambda: next(keys),
+        print_fn=lambda *_: None,
+        clear_screen=lambda: None,
+        move_cursor=lambda *_: None,
+    )
+
+    assert queue.read_text(encoding="utf-8") == "uno"
 
 
 def test_find_all_candidates_searches_every_query_before_review():
@@ -282,11 +374,36 @@ def test_main_removes_approved_query_only_after_card_creation(tmp_path, monkeypa
     monkeypatch.setattr(auto_miner, "review_candidates", review)
     monkeypatch.setattr(auto_miner.sys, "stdin", InteractiveInput())
     monkeypatch.setattr(auto_miner, "RECENT_SOURCES_PATH", tmp_path / "recent_sources.json")
+    monkeypatch.setattr(auto_miner, "edit_input_file", lambda *args, **kwargs: None)
 
     assert auto_miner.main([str(queue), "source.srt"]) == 0
     assert queue.read_text(encoding="utf-8") == "dos\n"
     assert [call[1]["queue_position"] for call in reviewed] == [1, 2]
     assert all(call[1]["queue_total"] == 2 for call in reviewed)
+
+
+def test_main_saves_edited_queue_even_when_anki_fails_to_start(tmp_path, monkeypatch):
+    import msvcrt
+
+    queue = tmp_path / "automine_inputs.txt"
+    queue.write_text("uno", encoding="utf-8")
+    keystrokes = iter(["\r", "d", "o", "s", "\x13"])
+
+    class InteractiveInput:
+        @staticmethod
+        def isatty():
+            return True
+
+    def fail_to_start():
+        raise FileNotFoundError("Anki is not running and its executable could not be found.")
+
+    monkeypatch.setattr(msvcrt, "getwch", lambda: next(keystrokes))
+    monkeypatch.setattr(auto_miner, "load_source_contexts", lambda _: ["context"])
+    monkeypatch.setattr(auto_miner, "start_anki_if_needed", fail_to_start)
+    monkeypatch.setattr(auto_miner.sys, "stdin", InteractiveInput())
+
+    assert auto_miner.main([str(queue), "source.srt"]) == 1
+    assert queue.read_text(encoding="utf-8") == "uno\ndos"
 
 
 def test_main_prompts_for_source_when_omitted(tmp_path, monkeypatch):
@@ -300,6 +417,7 @@ def test_main_prompts_for_source_when_omitted(tmp_path, monkeypatch):
             return True
 
     monkeypatch.setattr(auto_miner, "RECENT_SOURCES_PATH", tmp_path / "recent_sources.json")
+    monkeypatch.setattr(auto_miner, "DEFAULT_INPUT_FILE", queue)
     monkeypatch.setattr(auto_miner, "load_recent_sources", lambda: [str(remembered_path)])
     monkeypatch.setattr(auto_miner, "prompt_for_source_document", lambda recent: remembered_path)
     monkeypatch.setattr(auto_miner, "load_source_contexts", lambda path: ["context"] if path == remembered_path else [])
@@ -307,6 +425,7 @@ def test_main_prompts_for_source_when_omitted(tmp_path, monkeypatch):
     monkeypatch.setattr(auto_miner, "start_anki_if_needed", lambda: False)
     monkeypatch.setattr(auto_miner, "test_anki_connection", lambda: True)
     monkeypatch.setattr(auto_miner, "review_candidates", lambda *args, **kwargs: True)
+    monkeypatch.setattr(auto_miner, "edit_input_file", lambda *args, **kwargs: None)
     monkeypatch.setattr(auto_miner.sys, "stdin", InteractiveInput())
     monkeypatch.chdir(tmp_path)
 
