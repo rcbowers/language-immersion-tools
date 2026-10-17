@@ -9,20 +9,18 @@ def _candidate(text="Hola mundo."):
     return MiningCandidate("hola", "Hola", text, "show.srt", "00:00:01,000")
 
 
-def test_parse_args_uses_default_input_file_for_one_path():
-    args = auto_miner.parse_args(["source.pdf"])
+def test_parse_args_defaults_to_bundled_input_file():
+    args = auto_miner.parse_args([])
 
     assert args.input_file == auto_miner.PROJECT_ROOT / "automine_inputs.txt"
-    assert args.source_document == Path("source.pdf")
     assert args.source_lang == "es"
     assert args.target_lang == "en"
 
 
-def test_parse_args_leaves_source_document_none_when_omitted():
-    args = auto_miner.parse_args([])
+def test_parse_args_accepts_explicit_input_file():
+    args = auto_miner.parse_args(["words.txt"])
 
-    assert args.input_file == auto_miner.PROJECT_ROOT / "automine_inputs.txt"
-    assert args.source_document is None
+    assert args.input_file == Path("words.txt")
 
 
 def test_remember_recent_source_adds_newest_first_and_dedupes(tmp_path, monkeypatch):
@@ -352,82 +350,93 @@ def test_remove_query_from_queue_removes_only_one_matching_line(tmp_path):
     assert queue.read_text(encoding="utf-8") == "dos\nuno\n"
 
 
+
+
+class _InteractiveInput:
+    @staticmethod
+    def isatty():
+        return True
+
+
+def _patch_main(monkeypatch, *, load=lambda source: ["context"], groups=None, review=None):
+    monkeypatch.setattr(auto_miner, "load_source_contexts", load)
+    monkeypatch.setattr(auto_miner, "find_all_candidates", lambda queries, _: groups(queries))
+    monkeypatch.setattr(auto_miner, "start_anki_if_needed", lambda: False)
+    monkeypatch.setattr(auto_miner, "test_anki_connection", lambda: True)
+    monkeypatch.setattr(auto_miner, "review_candidates", review)
+    monkeypatch.setattr(auto_miner.sys, "stdin", _InteractiveInput())
+    monkeypatch.setattr(auto_miner, "edit_input_file", lambda *args, **kwargs: None)
+
+
 def test_main_removes_approved_query_only_after_card_creation(tmp_path, monkeypatch):
     queue = tmp_path / "automine_inputs.txt"
-    queue.write_text("uno\ndos\n", encoding="utf-8")
-    candidate_groups = [[_candidate("Uno.")], [_candidate("Dos.")]]
+    queue.write_text("# source.srt\nuno\ndos\n", encoding="utf-8")
     reviewed = []
-
-    class InteractiveInput:
-        @staticmethod
-        def isatty():
-            return True
 
     def review(candidates, *args, **kwargs):
         reviewed.append((candidates, kwargs))
         return candidates[0].sentence == "Uno."
 
-    monkeypatch.setattr(auto_miner, "load_source_contexts", lambda _: ["context"])
-    monkeypatch.setattr(auto_miner, "find_all_candidates", lambda *_: candidate_groups)
-    monkeypatch.setattr(auto_miner, "start_anki_if_needed", lambda: False)
-    monkeypatch.setattr(auto_miner, "test_anki_connection", lambda: True)
-    monkeypatch.setattr(auto_miner, "review_candidates", review)
-    monkeypatch.setattr(auto_miner.sys, "stdin", InteractiveInput())
-    monkeypatch.setattr(auto_miner, "RECENT_SOURCES_PATH", tmp_path / "recent_sources.json")
-    monkeypatch.setattr(auto_miner, "edit_input_file", lambda *args, **kwargs: None)
+    _patch_main(
+        monkeypatch,
+        groups=lambda queries: [[_candidate(q.capitalize() + ".")] for q in queries],
+        review=review,
+    )
 
-    assert auto_miner.main([str(queue), "source.srt"]) == 0
-    assert queue.read_text(encoding="utf-8") == "dos\n"
+    assert auto_miner.main([str(queue)]) == 0
+    assert queue.read_text(encoding="utf-8") == "# source.srt\ndos\n"
     assert [call[1]["queue_position"] for call in reviewed] == [1, 2]
     assert all(call[1]["queue_total"] == 2 for call in reviewed)
+
+
+def test_main_mines_each_section_from_its_own_source(tmp_path, monkeypatch):
+    queue = tmp_path / "automine_inputs.txt"
+    queue.write_text(
+        '# https://example.com/a\nuno\n\n# "broken.pdf"\nuno\n\n# b.srt\nuno\n',
+        encoding="utf-8",
+    )
+    loaded = []
+
+    def load(source):
+        loaded.append(source)
+        if source == "broken.pdf":
+            raise FileNotFoundError("Source document does not exist: broken.pdf")
+        return ["context"]
+
+    _patch_main(
+        monkeypatch,
+        load=load,
+        groups=lambda queries: [[_candidate("Uno.")] for _ in queries],
+        review=lambda *args, **kwargs: True,
+    )
+
+    assert auto_miner.main([str(queue)]) == 0
+    assert loaded == ["https://example.com/a", "broken.pdf", "b.srt"]
+    # Approved words leave their own sections; the skipped source keeps its word.
+    assert queue.read_text(encoding="utf-8") == '# https://example.com/a\n\n# "broken.pdf"\nuno\n\n# b.srt\n'
+
+
+def test_main_fails_when_queue_has_no_sections(tmp_path, monkeypatch):
+    queue = tmp_path / "automine_inputs.txt"
+    queue.write_text("orphan word\n", encoding="utf-8")
+    _patch_main(monkeypatch, groups=lambda q: [], review=lambda *a, **k: True)
+
+    assert auto_miner.main([str(queue)]) == 1
 
 
 def test_main_saves_edited_queue_even_when_anki_fails_to_start(tmp_path, monkeypatch):
     import msvcrt
 
     queue = tmp_path / "automine_inputs.txt"
-    queue.write_text("uno", encoding="utf-8")
+    queue.write_text("# source.srt\nuno", encoding="utf-8")
     keystrokes = iter(["\r", "d", "o", "s", "\x13"])
-
-    class InteractiveInput:
-        @staticmethod
-        def isatty():
-            return True
 
     def fail_to_start():
         raise FileNotFoundError("Anki is not running and its executable could not be found.")
 
     monkeypatch.setattr(msvcrt, "getwch", lambda: next(keystrokes))
-    monkeypatch.setattr(auto_miner, "load_source_contexts", lambda _: ["context"])
     monkeypatch.setattr(auto_miner, "start_anki_if_needed", fail_to_start)
-    monkeypatch.setattr(auto_miner.sys, "stdin", InteractiveInput())
+    monkeypatch.setattr(auto_miner.sys, "stdin", _InteractiveInput())
 
-    assert auto_miner.main([str(queue), "source.srt"]) == 1
-    assert queue.read_text(encoding="utf-8") == "uno\ndos"
-
-
-def test_main_prompts_for_source_when_omitted(tmp_path, monkeypatch):
-    queue = tmp_path / "automine_inputs.txt"
-    queue.write_text("uno\n", encoding="utf-8")
-    remembered_path = tmp_path / "picked.srt"
-
-    class InteractiveInput:
-        @staticmethod
-        def isatty():
-            return True
-
-    monkeypatch.setattr(auto_miner, "RECENT_SOURCES_PATH", tmp_path / "recent_sources.json")
-    monkeypatch.setattr(auto_miner, "DEFAULT_INPUT_FILE", queue)
-    monkeypatch.setattr(auto_miner, "load_recent_sources", lambda: [str(remembered_path)])
-    monkeypatch.setattr(auto_miner, "prompt_for_source_document", lambda recent: remembered_path)
-    monkeypatch.setattr(auto_miner, "load_source_contexts", lambda path: ["context"] if path == remembered_path else [])
-    monkeypatch.setattr(auto_miner, "find_all_candidates", lambda *_: [[_candidate("Uno.")]])
-    monkeypatch.setattr(auto_miner, "start_anki_if_needed", lambda: False)
-    monkeypatch.setattr(auto_miner, "test_anki_connection", lambda: True)
-    monkeypatch.setattr(auto_miner, "review_candidates", lambda *args, **kwargs: True)
-    monkeypatch.setattr(auto_miner, "edit_input_file", lambda *args, **kwargs: None)
-    monkeypatch.setattr(auto_miner.sys, "stdin", InteractiveInput())
-    monkeypatch.chdir(tmp_path)
-
-    assert auto_miner.main([]) == 0
-    assert auto_miner.load_recent_sources() == [str(remembered_path.resolve())]
+    assert auto_miner.main([str(queue)]) == 1
+    assert queue.read_text(encoding="utf-8") == "# source.srt\nuno\ndos"

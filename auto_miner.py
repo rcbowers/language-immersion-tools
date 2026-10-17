@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Interactively mine phrases from PDF or SRT sources into LinguaLoop Anki cards."""
+"""Interactively mine phrases into LinguaLoop Anki cards.
+
+The queue file groups words under ``# <source>`` headers, where the source is a
+local PDF/SRT path or a web URL.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +24,11 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from immersion_app.core.anki import add_anki_card, start_anki_if_needed, test_anki_connection
+from immersion_app.core.automine_queue import (
+    QueueSection,
+    parse_queue_sections,
+    remove_query_from_section,
+)
 from immersion_app.core.auto_mining import (
     MiningCandidate,
     MiningContext,
@@ -110,29 +119,23 @@ class FallbackTranslator:
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "paths",
-        nargs="*",
-        metavar="PATH",
-        help="[SOURCE_DOCUMENT], or INPUT_FILE SOURCE_DOCUMENT. "
-        "Omit SOURCE_DOCUMENT to choose from recently used sources.",
+        "input_file",
+        nargs="?",
+        type=Path,
+        default=None,
+        metavar="INPUT_FILE",
+        help="Queue file with '# <source path or URL>' sections of words to mine.",
     )
     parser.add_argument("--source-lang", default="es", choices=sorted(SUPPORTED_LANGUAGES))
     parser.add_argument("--target-lang", default="en", choices=sorted(SUPPORTED_LANGUAGES))
     args = parser.parse_args(argv)
-    if len(args.paths) == 0:
+    if args.input_file is None:
         args.input_file = Path(DEFAULT_INPUT_FILE)
-        args.source_document = None
-    elif len(args.paths) == 1:
-        args.input_file = Path(DEFAULT_INPUT_FILE)
-        args.source_document = Path(args.paths[0])
-    elif len(args.paths) == 2:
-        args.input_file = Path(args.paths[0])
-        args.source_document = Path(args.paths[1])
-    else:
-        parser.error("Use [SOURCE_DOCUMENT] or INPUT_FILE SOURCE_DOCUMENT.")
     return args
 
 
+# The recent-sources picker below is disabled: sources now come from the '# '
+# section headers in the queue file. Kept for possible reuse.
 def load_recent_sources() -> list[str]:
     """Return recently used source document paths, newest first."""
     if not RECENT_SOURCES_PATH.is_file():
@@ -177,6 +180,18 @@ def load_queries(path: Path) -> list[str]:
     if not path.is_file():
         raise FileNotFoundError(f"Input file does not exist: {path}")
     return [line.strip() for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+
+
+def load_queue_sections(path: Path) -> list[QueueSection]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Input file does not exist: {path}")
+    return parse_queue_sections(path.read_text(encoding="utf-8-sig"))
+
+
+def remove_section_query_from_queue(path: Path, source: str, query: str) -> None:
+    """Remove an approved query from *source*'s section of the queue file."""
+    text = path.read_text(encoding="utf-8-sig")
+    path.write_text(remove_query_from_section(text, source, query), encoding="utf-8")
 
 
 def find_all_candidates(
@@ -394,7 +409,7 @@ def edit_input_file(
 
     def redraw() -> None:
         clear_screen()
-        print_fn("Edit automine_inputs.txt — one phrase to mine per line.")
+        print_fn("Edit automine_inputs.txt — '# <path or URL>' starts a source; one phrase to mine per line below it.")
         print_fn("Arrows: move   Enter: new line   Backspace: delete   Ctrl+S: save and start mining")
         print_fn()
         for line in lines:
@@ -568,20 +583,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     try:
         edit_input_file(args.input_file)
-        if args.source_document is None:
-            args.source_document = prompt_for_source_document(load_recent_sources())
-        queries = load_queries(args.input_file)
-        contexts = load_source_contexts(args.source_document)
+        sections = load_queue_sections(args.input_file)
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    if not queries:
-        print("No phrases found in the input file.", file=sys.stderr)
+    if not sections:
+        print("No '# <source>' sections with phrases found in the input file.", file=sys.stderr)
         return 1
-    if not contexts:
-        print("No readable text contexts found in the source document.", file=sys.stderr)
-        return 1
-    remember_recent_source(args.source_document)
     try:
         started_anki = start_anki_if_needed()
     except (ConnectionError, FileNotFoundError, RuntimeError) as exc:
@@ -601,33 +609,47 @@ def main(argv: Sequence[str] | None = None) -> int:
         offline_source_code=get_marian_language_code(args.source_lang),
         offline_target_code=get_marian_language_code(args.target_lang),
     )
-    print("Finding word instances...", flush=True)
-    candidates_by_query = find_all_candidates(queries, contexts)
-    print("Word-instance search complete.", flush=True)
 
     approved = skipped = unmatched = 0
-    for queue_position, (query, candidates) in enumerate(zip(queries, candidates_by_query), start=1):
-        if not candidates:
-            unmatched += 1
-            print(f"No match: {query}")
-            continue
+    for section in sections:
+        print(f"\nSource: {section.source}", flush=True)
         try:
-            created = review_candidates(
-                candidates,
-                translator.translate,
-                add_anki_card,
-                queue_position=queue_position,
-                queue_total=len(queries),
-            )
+            contexts = load_source_contexts(section.source)
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            print(f"Skipping source: {exc}", file=sys.stderr)
+            continue
+        if not contexts:
+            print("Skipping source: no readable text contexts found.", file=sys.stderr)
+            continue
+
+        print("Finding word instances...", flush=True)
+        candidates_by_query = find_all_candidates(section.queries, contexts)
+        print("Word-instance search complete.", flush=True)
+
+        for queue_position, (query, candidates) in enumerate(
+            zip(section.queries, candidates_by_query), start=1
+        ):
+            if not candidates:
+                unmatched += 1
+                print(f"No match: {query}")
+                continue
+            try:
+                created = review_candidates(
+                    candidates,
+                    translator.translate,
+                    add_anki_card,
+                    queue_position=queue_position,
+                    queue_total=len(section.queries),
+                )
+                if created:
+                    remove_section_query_from_queue(args.input_file, section.source, query)
+            except Exception as exc:
+                print(f"Error while processing '{query}': {exc}", file=sys.stderr)
+                return 1
             if created:
-                remove_query_from_queue(args.input_file, query)
-        except Exception as exc:
-            print(f"Error while processing '{query}': {exc}", file=sys.stderr)
-            return 1
-        if created:
-            approved += 1
-        else:
-            skipped += 1
+                approved += 1
+            else:
+                skipped += 1
 
     print(f"Finished: {approved} created, {skipped} skipped, {unmatched} unmatched.")
     return 0

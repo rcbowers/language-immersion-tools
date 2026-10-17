@@ -4,6 +4,7 @@ googletrans==4.0.2
 # googletrans 4.x requires the modern httpx/httpcore transport API.  Do not pin
 # httpcore separately: pip resolves the compatible version through httpx.
 httpx>=0.27.2,<1.0
+requests>=2.31.0  # web page sources for auto_miner
 psutil>=5.9.0
 PySide6>=6.7.0
 PyMuPDF>=1.24.0

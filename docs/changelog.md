@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-17
+
+### Automatic Miner Sources Now Come From the Queue File
+
+- `automine_inputs.txt` is grouped into `# <source>` sections; the source is a local PDF/SRT path (optionally quoted) or a web URL, and the lines below it are mined from that source. Approved words are removed from their own section only.
+- Web page sources are downloaded and split into sentence contexts by paragraph (`extract_url_contexts`); a source that fails to load is skipped with a warning.
+- The recent-sources picker and the `SOURCE_DOCUMENT` argument are disabled (code kept). `auto_miner.py [INPUT_FILE]` is the only form.
+
 ## 2026-09-23
 
 ### Added In-Terminal Queue Editor to Automatic Miner
