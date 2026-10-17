@@ -4,6 +4,7 @@
 
 ### Automatic Miner Sources Now Come From the Queue File
 
+- The queue file is now `automine_inputs.md` in the notes folder; its format is unchanged.
 - `automine_inputs.txt` is grouped into `# <source>` sections; the source is a local PDF/SRT path (optionally quoted) or a web URL, and the lines below it are mined from that source. Approved words are removed from their own section only.
 - Web page sources are downloaded and split into sentence contexts by paragraph (`extract_url_contexts`); a source that fails to load is skipped with a warning.
 - A `# none ...` section takes pasted sentences with the target word in `[brackets]`; each line is its own context and no source is loaded.

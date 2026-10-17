@@ -12,7 +12,8 @@ def _candidate(text="Hola mundo."):
 def test_parse_args_defaults_to_bundled_input_file():
     args = auto_miner.parse_args([])
 
-    assert args.input_file == auto_miner.PROJECT_ROOT / "automine_inputs.txt"
+    assert args.input_file == auto_miner.DEFAULT_INPUT_FILE
+    assert args.input_file.name == "automine_inputs.md"
     assert args.source_lang == "es"
     assert args.target_lang == "en"
 
