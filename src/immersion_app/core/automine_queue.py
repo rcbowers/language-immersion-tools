@@ -7,6 +7,7 @@ the non-blank lines beneath it are the words to mine from that source.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 
 
 @dataclass
@@ -20,6 +21,30 @@ class QueueSection:
 def is_url(source: str) -> bool:
     """Return True when *source* names a web page rather than a local file."""
     return source.lower().startswith(("http://", "https://"))
+
+
+INLINE_SOURCE = "none"
+_BRACKETED = re.compile(r"\[([^\[\]]+)\]")
+
+
+def is_inline_source(source: str) -> bool:
+    """Return True for the ``# none ...`` section, whose lines are their own contexts."""
+    return source.strip().lower().startswith(INLINE_SOURCE)
+
+
+def parse_inline_context(line: str) -> tuple[str, str, int, int] | None:
+    """Split ``sentence with [word]`` into (word, sentence, start, end).
+
+    The sentence has its brackets removed; start/end locate the word within it.
+    Returns None when the line has no bracketed word.
+    """
+    line = line.strip()
+    match = _BRACKETED.search(line)
+    if match is None:
+        return None
+    word = match.group(1)
+    sentence = line[: match.start()] + word + line[match.end() :]
+    return word.strip(), sentence, match.start(), match.start() + len(word)
 
 
 def _header_source(line: str) -> str:

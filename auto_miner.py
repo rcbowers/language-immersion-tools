@@ -26,6 +26,8 @@ if str(SRC_ROOT) not in sys.path:
 from immersion_app.core.anki import add_anki_card, start_anki_if_needed, test_anki_connection
 from immersion_app.core.automine_queue import (
     QueueSection,
+    is_inline_source,
+    parse_inline_context,
     parse_queue_sections,
     remove_query_from_section,
 )
@@ -192,6 +194,25 @@ def remove_section_query_from_queue(path: Path, source: str, query: str) -> None
     """Remove an approved query from *source*'s section of the queue file."""
     text = path.read_text(encoding="utf-8-sig")
     path.write_text(remove_query_from_section(text, source, query), encoding="utf-8")
+
+
+def inline_candidates(line: str) -> list[MiningCandidate]:
+    """Build the single candidate for a '# none' line: a sentence with [word] in brackets."""
+    parsed = parse_inline_context(line)
+    if parsed is None:
+        return []
+    word, sentence, start, end = parsed
+    return [
+        MiningCandidate(
+            query=line,
+            matched_text=sentence[start:end],
+            sentence=sentence,
+            source_name="Pasted sentence",
+            location="",
+            match_start=start,
+            match_end=end,
+        )
+    ]
 
 
 def find_all_candidates(
@@ -613,18 +634,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     approved = skipped = unmatched = 0
     for section in sections:
         print(f"\nSource: {section.source}", flush=True)
-        try:
-            contexts = load_source_contexts(section.source)
-        except (FileNotFoundError, RuntimeError, ValueError) as exc:
-            print(f"Skipping source: {exc}", file=sys.stderr)
-            continue
-        if not contexts:
-            print("Skipping source: no readable text contexts found.", file=sys.stderr)
-            continue
+        if is_inline_source(section.source):
+            candidates_by_query = [inline_candidates(query) for query in section.queries]
+        else:
+            try:
+                contexts = load_source_contexts(section.source)
+            except (FileNotFoundError, RuntimeError, ValueError) as exc:
+                print(f"Skipping source: {exc}", file=sys.stderr)
+                continue
+            if not contexts:
+                print("Skipping source: no readable text contexts found.", file=sys.stderr)
+                continue
 
-        print("Finding word instances...", flush=True)
-        candidates_by_query = find_all_candidates(section.queries, contexts)
-        print("Word-instance search complete.", flush=True)
+            print("Finding word instances...", flush=True)
+            candidates_by_query = find_all_candidates(section.queries, contexts)
+            print("Word-instance search complete.", flush=True)
 
         for queue_position, (query, candidates) in enumerate(
             zip(section.queries, candidates_by_query), start=1

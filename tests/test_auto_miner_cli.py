@@ -440,3 +440,30 @@ def test_main_saves_edited_queue_even_when_anki_fails_to_start(tmp_path, monkeyp
 
     assert auto_miner.main([str(queue)]) == 1
     assert queue.read_text(encoding="utf-8") == "# source.srt\nuno\ndos"
+
+
+def test_inline_candidates_use_the_line_as_its_own_context():
+    (candidate,) = auto_miner.inline_candidates("Hay [fallas] aquí")
+
+    assert candidate.sentence == "Hay fallas aquí"
+    assert candidate.matched_text == "fallas"
+    assert auto_miner.inline_candidates("sin corchetes") == []
+
+
+def test_main_mines_none_section_without_loading_a_source(tmp_path, monkeypatch):
+    queue = tmp_path / "automine_inputs.txt"
+    queue.write_text("# none (Paste full sentences with target word in [brackets]\nHay [fallas] aquí\n", encoding="utf-8")
+    seen = []
+
+    def review(candidates, *args, **kwargs):
+        seen.append(candidates[0].sentence)
+        return True
+
+    def load(source):
+        raise AssertionError("no source should be loaded")
+
+    _patch_main(monkeypatch, load=load, groups=None, review=review)
+
+    assert auto_miner.main([str(queue)]) == 0
+    assert seen == ["Hay fallas aquí"]
+    assert queue.read_text(encoding="utf-8") == "# none (Paste full sentences with target word in [brackets]\n"

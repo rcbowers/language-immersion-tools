@@ -6,6 +6,7 @@
 
 - `automine_inputs.txt` is grouped into `# <source>` sections; the source is a local PDF/SRT path (optionally quoted) or a web URL, and the lines below it are mined from that source. Approved words are removed from their own section only.
 - Web page sources are downloaded and split into sentence contexts by paragraph (`extract_url_contexts`); a source that fails to load is skipped with a warning.
+- A `# none ...` section takes pasted sentences with the target word in `[brackets]`; each line is its own context and no source is loaded.
 - The recent-sources picker and the `SOURCE_DOCUMENT` argument are disabled (code kept). `auto_miner.py [INPUT_FILE]` is the only form.
 
 ## 2026-09-23

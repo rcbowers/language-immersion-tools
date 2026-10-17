@@ -1,7 +1,9 @@
 import pytest
 
 from immersion_app.core.automine_queue import (
+    is_inline_source,
     is_url,
+    parse_inline_context,
     parse_queue_sections,
     remove_query_from_section,
 )
@@ -52,3 +54,16 @@ def test_remove_query_from_section_removes_first_match_only():
 def test_remove_query_from_section_raises_when_missing():
     with pytest.raises(ValueError):
         remove_query_from_section("# a\nuno\n", "b", "uno")
+
+
+def test_is_inline_source_matches_none_header_with_hint():
+    assert is_inline_source("none")
+    assert is_inline_source("none (Paste full sentences with target word in [brackets]")
+    assert not is_inline_source("https://example.com/none")
+
+
+def test_parse_inline_context_strips_brackets_and_locates_word():
+    assert parse_inline_context("Sufre de [fallas] en el efecto") == (
+        "fallas", "Sufre de fallas en el efecto", 9, 15,
+    )
+    assert parse_inline_context("sin corchetes") is None
