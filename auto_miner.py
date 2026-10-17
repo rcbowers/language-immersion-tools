@@ -56,8 +56,16 @@ from immersion_app.media.source_context import load_source_contexts
 # The queue lives in the Obsidian vault and is addressed absolutely so it is
 # found regardless of the directory from which the command is launched.
 # Explicit input-file arguments remain relative to the caller's current directory.
-DEFAULT_INPUT_FILE = Path(
+_PRIMARY_VAULT_INPUT_FILE = Path(
     "~/notes/automine_inputs.md"
+)
+_OTHER_VAULT_INPUT_FILE = Path(
+    "~/notes/automine_inputs.md"
+)
+DEFAULT_INPUT_FILE = (
+    _PRIMARY_VAULT_INPUT_FILE
+    if _PRIMARY_VAULT_INPUT_FILE.parent.is_dir()
+    else _OTHER_VAULT_INPUT_FILE
 )
 CARD_MIN_CONTENT_WIDTH = 40
 CARD_MAX_CONTENT_WIDTH = 72
