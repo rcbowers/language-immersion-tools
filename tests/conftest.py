@@ -21,3 +21,16 @@ for path in (str(SRC), str(ROOT), str(ROOT / "scripts")):
 
 os.environ.setdefault("IMMERSION_DATA_DIR", tempfile.mkdtemp(prefix="immersion-tests-"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture
+def make_epub(tmp_path):
+    """Factory fixture: ``make_epub(name="libro.epub", chapters=2, paragraphs=60) -> Path``."""
+    from epub_helpers import build_epub
+
+    def _make(name="libro.epub", chapters=2, paragraphs=60):
+        return build_epub(tmp_path / name, chapters=chapters, paragraphs=paragraphs)
+
+    return _make

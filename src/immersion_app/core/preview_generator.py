@@ -6,9 +6,10 @@ import logging
 import os
 from pathlib import Path
 
-import fitz
+import pymupdf
 from PySide6.QtCore import QObject, QRunnable, Signal
 
+from immersion_app.core.pdf_service import EPUB_FONT_SIZE, EPUB_PAGE_HEIGHT, EPUB_PAGE_WIDTH
 from immersion_app.core.signals import safe_emit
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ class PreviewGenerationTask(QRunnable):
         # Ensure preview directory exists
         self.preview_dir.mkdir(parents=True, exist_ok=True)
 
-        if self.content_type == "pdf":
+        if self.content_type in ("pdf", "epub"):
             self._generate_pdf_preview(preview_path)
         elif self.content_type == "video":
             self._generate_video_preview(preview_path)
@@ -67,9 +68,11 @@ class PreviewGenerationTask(QRunnable):
         return str(preview_path)
 
     def _generate_pdf_preview(self, preview_path: Path) -> None:
-        """Generate PDF preview using PyMuPDF."""
-        doc = fitz.open(self.file_path)
+        """Generate a first-page preview for a PDF or EPUB using PyMuPDF."""
+        doc = pymupdf.open(self.file_path)
         try:
+            if doc.is_reflowable:
+                doc.layout(width=EPUB_PAGE_WIDTH, height=EPUB_PAGE_HEIGHT, fontsize=EPUB_FONT_SIZE)
             # Render first page
             page = doc.load_page(0)
 
@@ -79,7 +82,7 @@ class PreviewGenerationTask(QRunnable):
             zoom_y = self.PREVIEW_HEIGHT / page_rect.height
             zoom = min(zoom_x, zoom_y)
 
-            matrix = fitz.Matrix(zoom, zoom)
+            matrix = pymupdf.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=matrix, alpha=False)
 
             # Save as JPEG

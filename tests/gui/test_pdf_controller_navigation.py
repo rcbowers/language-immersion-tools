@@ -303,3 +303,74 @@ def test_word_highlights_cover_words_with_seen_and_new_colours(controller_factor
     seen_colours = {color.name(argb) for _rect, color in items}
     new_colours = {color.name(argb) for _rect, color in window._labels["words"]}
     assert len(seen_colours) == 2 and len(new_colours) == 1
+
+
+# ------------------------------------------------------------------ EPUB
+
+
+def _load_epub(controller, path, page=0, location=None):
+    with patch("immersion_app.gui.controllers.pdf_controller.QTimer.singleShot"), patch(
+        "immersion_app.gui.controllers.pdf_controller.save_user_data"
+    ):
+        controller.load_pdf(str(path), initial_page_index=page, initial_location=location)
+
+
+def test_load_epub_records_epub_type_and_chapter_location(controller_factory, make_epub):
+    controller, window = controller_factory()
+    _load_epub(controller, make_epub(), page=2)
+
+    entry = window.user_data["recent_files"][0]
+    assert entry["type"] == "epub"
+    assert entry["page_index"] == 2
+    assert "chapter" in entry and "chapter_page" in entry
+    assert controller.pdf_service.doc_kind == "epub"
+
+
+def test_epub_navigation_and_snapshot_track_position(controller_factory, make_epub):
+    controller, window = controller_factory()
+    _load_epub(controller, make_epub(), page=0)
+
+    controller.next_page()
+    controller.next_page()
+
+    assert controller.current_page_index == 2
+    snapshot = controller.position_snapshot()
+    assert snapshot["page_index"] == 2
+    assert controller.pdf_service.page_for_location(snapshot["chapter"], snapshot["chapter_page"]) == 2
+
+
+def test_epub_location_wins_over_stale_page_index(controller_factory, make_epub):
+    path = make_epub()
+    controller, _window = controller_factory()
+    _load_epub(controller, path, page=3)
+    location = controller.pdf_service.location_for_page(3)
+
+    other, _w = controller_factory()
+    _load_epub(other, path, page=0, location=location)
+
+    assert other.current_page_index == 3
+
+
+def test_epub_unresolvable_location_falls_back_to_page_index(controller_factory, make_epub):
+    controller, _window = controller_factory()
+    _load_epub(controller, make_epub(), page=1, location=(99, 99))
+
+    assert controller.current_page_index == 1
+
+
+def test_pdf_snapshot_has_only_page_index(controller_factory, sample_pdf):
+    controller, _window = controller_factory()
+    _load(controller, sample_pdf, page=2)
+
+    assert controller.position_snapshot() == {"page_index": 2}
+    assert _window.user_data["recent_files"][0]["type"] == "pdf"
+
+
+def test_epub_page_renders_with_words(controller_factory, make_epub, qapp):
+    controller, _window = controller_factory()
+    _load_epub(controller, make_epub())
+
+    controller.render_current_page()
+    _settle(qapp, controller)
+
+    assert controller.page_words

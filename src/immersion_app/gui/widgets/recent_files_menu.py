@@ -26,7 +26,7 @@ class RecentFileMenuItem(QWidget):
         layout.setSpacing(4)
 
         # Icon + Filename row
-        icon = "📄" if self.file_type == "pdf" else "🎬"
+        icon = "🎬" if self.file_type == "video" else ("📖" if self.file_type == "epub" else "📄")
         filename = self.file_data.get("name", "Unknown")
 
         self.filename_label = QLabel(f"{icon} {filename}")

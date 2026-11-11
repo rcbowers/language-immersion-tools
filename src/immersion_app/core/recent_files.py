@@ -5,6 +5,8 @@ from pathlib import Path
 import os
 
 MAX_RECENT_FILES = 5
+# File types that are read page by page (as opposed to played back over time).
+PAGE_FILE_TYPES = ("pdf", "epub")
 
 
 def add_recent_file(user_data: dict, file_path: str, file_type: str, position: dict) -> None:
@@ -14,8 +16,8 @@ def add_recent_file(user_data: dict, file_path: str, file_type: str, position: d
     Args:
         user_data: User data dict
         file_path: Absolute path to the file
-        file_type: "pdf" or "video"
-        position: Dict with "page_index" (PDF) or "video_position_ms" (video)
+        file_type: "pdf", "epub" or "video"
+        position: Dict with "page_index" (+ optional "chapter"/"chapter_page" for EPUB) or "video_position_ms" (video)
     """
     # Normalize path (absolute, case-insensitive on Windows)
     normalized_path = os.path.normcase(os.path.abspath(file_path))
@@ -39,8 +41,11 @@ def add_recent_file(user_data: dict, file_path: str, file_type: str, position: d
     }
 
     # Add position data
-    if file_type == "pdf":
+    if file_type in PAGE_FILE_TYPES:
         new_entry["page_index"] = position.get("page_index", 0)
+        for key in ("chapter", "chapter_page"):
+            if position.get(key) is not None:
+                new_entry[key] = position[key]
     else:  # video
         new_entry["video_position_ms"] = position.get("video_position_ms", 0)
 
@@ -128,10 +133,10 @@ def format_position_metadata(file_type: str, page_index: int = 0, video_position
     Format position metadata for display.
 
     Returns:
-        - PDF: "Page 42"
+        - PDF / EPUB: "Page 42"
         - Video: "1:23:45" (formatted timestamp)
     """
-    if file_type == "pdf":
+    if file_type in PAGE_FILE_TYPES:
         return f"Page {page_index + 1}"  # Convert 0-indexed to 1-indexed
     else:  # video
         # Convert milliseconds to HH:MM:SS or MM:SS

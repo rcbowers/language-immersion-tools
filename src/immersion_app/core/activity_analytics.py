@@ -10,6 +10,8 @@ from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QObject, Signal
 
+from immersion_app.core.recent_files import PAGE_FILE_TYPES
+
 
 @dataclass(frozen=True)
 class SessionMetrics:
@@ -49,7 +51,7 @@ class ActivityAnalyticsManager(QObject):
 
         active_total = sum(session.active_seconds for session in sessions)
         open_total = sum(session.open_seconds for session in sessions)
-        pdf_active = sum(session.active_seconds for session in sessions if session.file_type == "pdf")
+        pdf_active = sum(session.active_seconds for session in sessions if session.file_type in PAGE_FILE_TYPES)
         video_active = sum(session.active_seconds for session in sessions if session.file_type == "video")
         pdf_pages = sum(session.pages_advanced for session in sessions)
         video_minutes = sum(session.minutes_advanced for session in sessions)
@@ -74,7 +76,7 @@ class ActivityAnalyticsManager(QObject):
             "mode_split": [
                 {
                     "file_type": "pdf",
-                    "label": "PDF",
+                    "label": "Documents",
                     "active_seconds": pdf_active,
                     "percentage": self._percentage(pdf_active, active_total),
                 },
@@ -171,7 +173,7 @@ class ActivityAnalyticsManager(QObject):
                 source_entry["open_seconds"] += session.open_seconds
                 source_entry["pages_advanced"] += session.pages_advanced
                 source_entry["minutes_advanced"] += session.minutes_advanced
-                if session.file_type == "pdf" and not session.has_precise_pdf_metrics and session.pages_advanced == 0:
+                if session.file_type in PAGE_FILE_TYPES and not session.has_precise_pdf_metrics and session.pages_advanced == 0:
                     source_entry["consumption_is_partial"] = True
                 if session.file_type == "video" and not session.has_precise_video_metrics and session.minutes_advanced == 0:
                     source_entry["consumption_is_partial"] = True

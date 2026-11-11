@@ -106,7 +106,7 @@ Current state managers:
 Current domain services:
 - **`TranslationService`** - Owns translation cache, backend state, request deduplication, and async translation tasks
 - **`AnkiService`** - Owns Anki connection state, queue workflows, and add/process operations
-- **`PDFService`** - Owns PDF document state, render metadata, hit-testing helpers, and context extraction
+- **`PDFService`** - Owns PDF/EPUB document state (`doc_kind`, reflow layout for EPUB, TOC and chapter locations), render metadata, hit-testing helpers, and context extraction
 - **`VideoService`** - Owns subtitle parsing state, subtitle offset state, and subtitle lookup helpers
 
 ### State Management Pattern

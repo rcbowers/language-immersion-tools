@@ -68,11 +68,11 @@ class ContentBrowserItem(QWidget):
 
     def _format_metadata(self) -> str:
         """Format metadata text (page count or duration)."""
-        if self.content_type == "pdf":
+        if self.content_type in ("pdf", "epub"):
             page_count = self.content_data.get("page_count")
             if page_count is not None:
                 return f"{page_count} pages"
-            return "PDF"
+            return "EPUB" if self.content_type == "epub" else "PDF"
         elif self.content_type == "video":
             duration_ms = self.content_data.get("duration_ms")
             if duration_ms is not None:

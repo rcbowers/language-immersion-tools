@@ -45,16 +45,39 @@ def _format_timestamp(milliseconds: int) -> str:
 def extract_pdf_contexts(path: str | Path) -> list[SourceContext]:
     """Extract sentence contexts from a text-based PDF, grouped by page."""
     try:
-        import fitz
+        import pymupdf
     except ImportError as exc:  # pragma: no cover - declared project dependency
         raise RuntimeError("PyMuPDF is required to read PDF source documents.") from exc
 
     source_path = Path(path)
     contexts: list[SourceContext] = []
-    with fitz.open(source_path) as document:
+    with pymupdf.open(source_path) as document:
         for page_index, page in enumerate(document):
             for sentence in _sentences(page.get_text("text") or ""):
                 contexts.append(SourceContext(sentence, source_path.name, f"Page {page_index + 1}"))
+    return contexts
+
+
+def extract_epub_contexts(path: str | Path) -> list[SourceContext]:
+    """Extract sentence contexts from an EPUB, grouped by page of the reader's fixed layout."""
+    try:
+        import pymupdf
+    except ImportError as exc:  # pragma: no cover - declared project dependency
+        raise RuntimeError("PyMuPDF is required to read EPUB source documents.") from exc
+    from immersion_app.core.pdf_service import EPUB_FONT_SIZE, EPUB_PAGE_HEIGHT, EPUB_PAGE_WIDTH
+
+    source_path = Path(path)
+    contexts: list[SourceContext] = []
+    with pymupdf.open(source_path) as document:
+        if document.is_reflowable:
+            document.layout(width=EPUB_PAGE_WIDTH, height=EPUB_PAGE_HEIGHT, fontsize=EPUB_FONT_SIZE)
+        for page_index, page in enumerate(document):
+            # Per text block, so headings (which lack end punctuation) don't merge into the next sentence.
+            for block in page.get_text("blocks"):
+                if block[6] != 0:  # image block
+                    continue
+                for sentence in _sentences(block[4] or ""):
+                    contexts.append(SourceContext(sentence, source_path.name, f"Page {page_index + 1}"))
     return contexts
 
 
@@ -172,7 +195,7 @@ def extract_url_contexts(url: str, *, fetch: Callable[[str], str] | None = None)
 
 
 def load_source_contexts(path: str | Path) -> list[SourceContext]:
-    """Load contexts from a web page URL, or a PDF or SRT source document."""
+    """Load contexts from a web page URL, PDF, EPUB or SRT source document."""
     if is_url(str(path)):
         return extract_url_contexts(str(path))
     source_path = Path(path)
@@ -180,6 +203,8 @@ def load_source_contexts(path: str | Path) -> list[SourceContext]:
         raise FileNotFoundError(f"Source document does not exist: {source_path}")
     if source_path.suffix.lower() == ".pdf":
         return extract_pdf_contexts(source_path)
+    if source_path.suffix.lower() == ".epub":
+        return extract_epub_contexts(source_path)
     if source_path.suffix.lower() == ".srt":
         return extract_srt_contexts(source_path)
-    raise ValueError("Unsupported source document. Use a .pdf or .srt file.")
+    raise ValueError("Unsupported source document. Use a .pdf, .epub or .srt file.")

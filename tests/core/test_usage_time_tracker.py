@@ -114,6 +114,21 @@ class TestSessionTracking:
         assert tracker._session_start_time is not None
 
     @patch("immersion_app.core.usage_time_tracker.save_user_data")
+    def test_epub_session_is_typed_epub_and_records_page_metrics(self, mock_save, empty_user_data):
+        tracker = UsageTimeTracker(empty_user_data)
+        signal_spy = Mock()
+        tracker.session_started.connect(signal_spy)
+
+        tracker.on_document_loaded("C:/test/libro.EPUB", 40)
+        tracker.set_pdf_page_index(3)
+        tracker.set_pdf_page_index(8)
+
+        assert signal_spy.call_args[0][1] == "epub"
+        assert tracker._current_file_type == "epub"
+        assert tracker._start_page_index == 3
+        assert tracker._current_page_index == 8
+
+    @patch("immersion_app.core.usage_time_tracker.save_user_data")
     def test_session_end_on_document_closed(self, mock_save, empty_user_data):
         """Verify session ends when document is closed."""
         tracker = UsageTimeTracker(empty_user_data)

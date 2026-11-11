@@ -61,7 +61,25 @@ class TestPreviewGenerator(unittest.TestCase):
         self.assertEqual(len(signals_captured), 1)
         self.assertIn("C:\\nonexistent\\file.pdf", signals_captured[0][0])
 
-    @patch('immersion_app.core.preview_generator.fitz')
+    def test_epub_preview_renders_first_page(self):
+        """EPUB previews are laid out and rendered like a PDF first page."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from epub_helpers import build_epub
+
+        self.preview_dir.mkdir(parents=True)
+        epub = build_epub(Path(self.temp_dir.name) / "libro.epub", chapters=1, paragraphs=5)
+        task = PreviewGenerationTask(str(epub), "epub", "ep123", self.preview_dir)
+        finished = []
+        task.signals.finished.connect(lambda fp, pp: finished.append(pp))
+
+        task.run()
+
+        self.assertEqual(len(finished), 1)
+        self.assertTrue(finished[0].endswith("ep123_epub.jpg"))
+        self.assertGreater(Path(finished[0]).stat().st_size, 0)
+
+    @patch('immersion_app.core.preview_generator.pymupdf')
     def test_pdf_preview_generation_task(self, mock_fitz):
         """PDF preview generation task creates thumbnail."""
         # Create preview directory

@@ -26,7 +26,7 @@ class WelcomeRecentFileItem(QWidget):
         layout.setSpacing(6)
 
         # Icon + Filename row
-        icon = "📄" if self.file_type == "pdf" else "🎬"
+        icon = "🎬" if self.file_type == "video" else ("📖" if self.file_type == "epub" else "📄")
         filename = self.file_data.get("name", "Unknown")
 
         self.filename_label = QLabel(f"{icon}  {filename}")
@@ -146,7 +146,7 @@ class WelcomeRecentFilesList(QWidget):
             self.list_layout.addStretch()
         else:
             # Show empty state
-            empty_label = QLabel("No recent files yet\nOpen a PDF or video to get started")
+            empty_label = QLabel("No recent files yet\nOpen a PDF, EPUB or video to get started")
             empty_label.setAlignment(Qt.AlignCenter)
             empty_label.setStyleSheet(f"""
                 QLabel {{
