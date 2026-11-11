@@ -78,9 +78,19 @@ class MiningController(QObject):
             location=self.window.current_source_location,
         )
 
+    def _has_usable_translation(self) -> bool:
+        """True when the selection has a real translation (not empty, pending or an error message)."""
+        translation = self.selection.translation
+        return bool(
+            self.selection.word
+            and translation
+            and translation != "translating..."
+            and not translation.startswith("Translation error:")
+        )
+
     def add_now(self):
         """Add the current selection to Anki on a worker thread (never blocks the UI)."""
-        if not self.selection.word or not self.selection.translation or self.selection.translation == "translating...":
+        if not self._has_usable_translation():
             return
         if self._add_in_flight:
             return
@@ -115,7 +125,7 @@ class MiningController(QObject):
         QMessageBox.critical(self.window, "Anki Add Failed", message)
 
     def add_to_queue(self):
-        if not self.selection.word or not self.selection.translation or self.selection.translation == "translating...":
+        if not self._has_usable_translation():
             return
         try:
             payload = self.queue_payload()
