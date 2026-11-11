@@ -1,12 +1,12 @@
 # Language Immersion Tools
 
-Language Immersion Tools (LIT) is a free desktop app for immersion-based language learning according to methods like Refold.la (not affiliated). Open a PDF or subtitled video, click any word you don't know to see the translation, and automatically generate an Anki card with the target word, sentence context, and translation.
+Language Immersion Tools (LIT) is a free desktop app for immersion-based language learning according to methods like Refold.la (not affiliated). Open a PDF or subtitled video, click words to translate them directly in the reader, and automatically generate an Anki card with the target word + sentence context + translation.
 
 I initially built this for my own personal use. I found that I was wasting a lot of time while doing active immersion in ebooks or TV shows. When I found a word, I would have to stop, copy the word into Google Translate, then manually create an Anki card. I built this to consolidate and partially automate that workflow so I could spend more time actually immersing. LIT grew organically over time as I tweaked and added new features that I wanted, and I personally use it for immersion most days. 
 
 Requests for new features are more than welcome! Please create an issue for this. An experimental branch will be used to contain all the niche features that I add for myself; you may use this branch if you'd like.
 
-For the nerds, LIT also tracks analytics about your activity and progress - time spent actively using the app, total words mined, the relative frequency of those words (according to standard lists), etc. This is all stored locally for you to use as you please.
+LIT also tracks analytics about your activity and progress if you're into that kind of thing. Time spent actively using the app, total words mined, the relative frequency of those words (according to standard lists), etc. This is all stored locally for you to use as you please.
 
 ![Reading a Spanish PDF with a translation popover](docs/screenshots/reader.png)
 
@@ -96,13 +96,12 @@ The dot in the status bar fills in (●) when study time is being counted. It co
 ![Dark mode](docs/screenshots/reader_dark.png)
 
 ## Online vs offline translation
-
 - **Online** is the default. It uses Google Translate through [`googletrans`](https://pypi.org/project/googletrans/), which is an unofficial library. It needs internet and sends the words you look up to Google, and since it's unofficial it sometimes breaks or gets rate limited. If that happens, turn off *Pre-translate words on each page* in Settings or switch to offline.
 - **Offline** uses [MarianMT](https://huggingface.co/Helsinki-NLP) models through Hugging Face Transformers. Install `requirements-offline.txt` first. The first time you use a language pair it downloads that model (a few hundred MB). After that everything stays on your computer.
 
 You can switch in Settings or by clicking the *Translation* badge in the status bar.
 
-## Where your data lives
+## Data storage
 
 Settings, the card queue, study history and logs are all stored in a per-user folder:
 
@@ -110,11 +109,11 @@ Settings, the card queue, study history and logs are all stored in a per-user fo
 - macOS: `~/Library/Application Support/LinguaLoop`
 - Linux: `~/.local/share/LinguaLoop`
 
-*Settings → Data folder → Open* will open it for you. If you want it somewhere else (like a synced folder or a thumb drive), set the `LINGUALOOP_DATA_DIR` environment variable. If you're upgrading from an older version that kept data in the repo's `data/` folder, it gets copied over automatically the first time you launch.
+*Settings → Data folder → Open* will open it for you. If you want it somewhere else (like a synced folder or a thumb drive), set the `LINGUALOOP_DATA_DIR` environment variable.
 
 ## Companion tools
 
-There are also some command-line tools in `src/immersion_app/cli`. Run them with `src` on your `PYTHONPATH`:
+There are also some command-line tools in `src/immersion_app/cli`. These will probably be integrated into the main LIT app at some point:
 
 ```bash
 python -m immersion_app.cli.queue                                    # send queued cards to Anki
@@ -122,32 +121,21 @@ python -m immersion_app.cli.subtitles --mode folder --video-folder videos -l es 
 python -m immersion_app.cli.audio "https://youtube.com/watch?v=..."  # download/extract audio
 python -m immersion_app.cli.analyze books --types srt pdf            # word-frequency analysis
 ```
-
-`auto_miner.py` is a terminal tool for mining a batch of words at once. Make a markdown file with words listed under `# <source>` headers, where the source is a PDF, an SRT file or a web URL. It finds each word in its source, lets you pick the example sentence and adjust how much context to include, and then makes the cards.
+`auto_miner.py` is a terminal tool for mining a batch of words at once. Make a markdown file with words listed under `# <source>` headers, where the source is a PDF, an SRT file or a web URL. It finds each word in its source, lets you pick the example sentence, and then makes the cards. This is nice for if you immersed outside of the LIT app (i.e. in a paper book) and still want to use the LIT auto Anki generation. 
 
 ```bash
 python auto_miner.py [INPUT_FILE] [--deck "My Deck"] [--source-lang es] [--target-lang en]
 ```
-
-By default it reads `automine_inputs.md` from the data folder. You can point it at a different file with `LINGUALOOP_AUTOMINE_FILE` if you'd rather keep your word list in a notes app. The terminal UI only works on Windows for now.
-
-`scripts/` has a couple other utilities: a vocabulary counter and an AV1→H.264 video converter.
+By default it reads `automine_inputs.md` from the data folder. You can point it at a different file with `LINGUALOOP_AUTOMINE_FILE`.
 
 ## Troubleshooting
-
-- **Anki says "Not connected."** Make sure Anki is open and AnkiConnect is installed (code `2055492159`), then click the badge to check again. If Anki is running but your deck or note type is missing, the checklist and Settings will tell you which one.
-- **Translations fail or say "rate limited" (HTTP 429).** Google is throttling the unofficial API. Turn off pre-translation in Settings and wait a while, or switch to offline translation.
+- **Anki says "Not connected."** Make sure Anki is open and AnkiConnect is installed, then click the badge to check again. 
+- **Translations fail or say "rate limited" (HTTP 429).** This app uses the unofficial Google Translate API, which can sometimes be throttled/rate-limited. Turn off pre-translation in Settings and wait a while, or switch to offline translation.
 - **A video won't play.** LinguaLoop uses Qt's FFmpeg backend, and some AV1 and HEVC files won't play with it. Convert them to H.264 first (`scripts/convert_to_h264.ps1` does this on Windows).
-- **Logs** are in the data folder under `logs/`, one file per session. If you open an issue, attaching the log helps a lot.
-
-## Contributing
-
-Bug reports and PRs are welcome! Check out [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and an overview of how the code is organized.
 
 ## License
-
 LinguaLoop is free software under the [GNU General Public License v3.0](LICENSE).
 
 It's built on [PySide6/Qt](https://www.qt.io/qt-for-python) (LGPL-3.0), [PyMuPDF](https://pymupdf.readthedocs.io/) (AGPL-3.0) and [googletrans](https://pypi.org/project/googletrans/) (MIT), plus [Transformers](https://github.com/huggingface/transformers)/[PyTorch](https://pytorch.org/) and [Whisper](https://github.com/openai/whisper) if you install the extras. It bundles the [Inter](https://rsms.me/inter/) typeface (SIL Open Font License 1.1, see `src/immersion_app/gui/fonts/OFL.txt`). LinguaLoop isn't affiliated with Anki or AnkiConnect.
 
-Please only use it with books and videos you have the right to use. The repo doesn't include any.
+Please only use it with books and videos you have the right to use.
