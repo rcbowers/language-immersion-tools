@@ -1,188 +1,209 @@
 # Plan: Public Release on GitHub
 
-Status: proposed · Created: 2026-11-11
+Status: in progress · Created: 2026-11-11 · Last updated: 2026-11-11
 
 Goal: make LinguaLoop ready for a free public release on GitHub. Users should be able to install it from an installer, without cloning the repo or setting up Python.
 
-Findings come from a code review, a test-suite run, and launching the app against a throwaway data folder (with screenshots). No code has been changed yet.
+Findings came from a code review, a test-suite run, and launching the app against a throwaway data folder (with screenshots).
+
+**Progress (2026-11-11):** §1, §2, §3 (apart from fully breaking up `main_window.py`), §4 and §5 are done on branch `public-release-prep` (commit "Prepare for public release…"). Git history was rewritten to remove copyrighted and personal material; see §2. Still to do: §6 (packaging), §7 (built-in auto-miner), the rest of the `main_window.py` break-up, and the release-day steps at the end of this file.
 
 ---
 
 ## Suggested order
 
-1. [ ] Clean history and remove personal paths (§2)
-2. [ ] Make the Anki deck/note type and the data folder configurable (§2)
-3. [ ] Fix the activity tracker (§1)
-4. [ ] Fix the test run and add CI (§4)
-5. [ ] Rewrite the README and add a LICENSE (§5)
-6. [ ] Slim down dependencies and build the installer (§6)
+1. [x] Clean history and remove personal paths (§2). *History rewritten locally; force-push still pending (see "Release-day steps").*
+2. [x] Make the Anki deck/note type and the data folder configurable (§2)
+3. [x] Fix the activity tracker (§1)
+4. [x] Fix the test run and add CI (§4)
+5. [x] Rewrite the README and add a LICENSE (§5)
+6. [ ] Slim down dependencies and build the installer (§6). *Requirements are split now; packaging not started.*
 7. [ ] Build the auto-miner into the app (§7)
-8. [ ] Break up `main_window.py` (§3)
+8. [ ] Break up `main_window.py` (§3). *Partly done: 2,514 → 1,892 lines, `hasattr` guards 44 → 20.*
 
 ---
 
-## 1. Activity tracker: two confirmed bugs plus a design gap
+## 1. Activity tracker: two confirmed bugs plus a design gap (DONE)
 
 ### 1a. "Inactive when I'm active": the tracker stops for good after any break (confirmed)
 
-- After 2 idle minutes, `_check_inactivity` closes the session and `_reset_session_state()` clears `_session_start_time`.
-- From then on, `record_activity()` exits early because `_session_start_time is None` (`src/immersion_app/core/usage_time_tracker.py`, in `record_activity`).
-- So after the first break, clicks, page turns and playback are ignored until the file is reopened. Any time after the first pause goes unrecorded, and the indicator stays idle.
-- Repro (confirmed with a script): load a doc, record activity, backdate the buffer 3 minutes, call `_check_inactivity()`, then `record_activity()`. Result: `active: False, buffer: 0`.
+- After 2 idle minutes, `_check_inactivity` closed the session and cleared `_session_start_time`, so every later `record_activity()` returned early. Any time after the first pause went unrecorded.
 
-### 1b. "Active when I'm not": background work counts as user activity (confirmed)
+### 1b. "Active when I'm not": background work counted as user activity (confirmed)
 
-- `main_window.py:471` connects every `translation_ready` signal to `record_activity()`, including background prefetches (`visible=False`).
-  - In online mode, `TranslationService.prefetch_async` fires one `translate_async` per word on the page. Each reply arrives over the following seconds or minutes and counts as activity, so the user goes "active" without touching anything.
-  - The prefetch also sends hundreds of requests to Google per page, which risks rate-limiting or an IP block.
-- `main_window.py:470` connects every `selection_changed` signal to `record_activity()`, and the app fires that itself: `mining_controller.clear_selection()` runs on every PDF load and page change. In testing the indicator turned green as soon as the PDF loaded, with no user input.
+- Every `translation_ready` signal counted, including background prefetches (one request per word on the page in online mode).
+- Every `selection_changed` signal counted, and the app fires that itself on every load and page change.
 
-### 1c. Design gap: real reading doesn't count
+### 1c. Design gap: real reading didn't count
 
-These don't count as activity:
-- scrolling
-- mouse movement
-- reading a dense page for more than 2 minutes without clicking
-- sitting on a paused video
-
-Also:
-- Opening any app dialog (Queue, Activity, message boxes) takes focus from the main window (`changeEvent` → `ActivationChange` → `isActiveWindow()`), which marks the user idle.
-- The indicator only refreshes on a 30-second timer.
+- Scrolling, mouse movement, long reads and paused video didn't count. App dialogs marked the user idle. The indicator only refreshed every 30 s.
 
 ### Fix
 
-- [ ] Keep the file session open across idle periods and track separate active stretches inside it, instead of finalizing and wiping the session.
-- [ ] Count only `visible=True` translations as activity.
-- [ ] Remove the `selection_changed` → `record_activity` hook. Count real input instead (application-level event filter for mouse press/move, wheel/scroll, key press), throttled to about 1 event per 5–10 s.
-- [ ] Treat focus on the app's own dialogs and tool windows (popover, shortcut panel) as focused.
-- [ ] Refresh the indicator immediately on activity and on focus change, not just every 30 s.
-- [ ] Credit time to the calendar day it actually happened (sessions that run past midnight currently count on the start day).
-- [ ] Remove the dead `_on_video_loaded_for_usage` (`main_window.py:1826`).
-- [ ] Regression tests: idle → return → activity counts again; background prefetch doesn't mark active; dialog focus doesn't mark idle.
+- [x] Keep the file session open across idle periods and track separate active stretches ("segments") inside it. The next activity starts a new segment.
+- [x] Count only `visible=True` translations as activity.
+- [x] Remove the `selection_changed` hook. Count real input instead via `gui/activity_monitor.py` (`UserActivityMonitor`, app-level event filter, throttled to 1 event per 5 s).
+- [x] Treat focus on the app's own dialogs and tool windows as focused (`QGuiApplication.applicationStateChanged`).
+- [x] Refresh the indicator immediately on activity and focus change, plus a 5 s timer (was 30 s).
+- [x] Credit time to the calendar day it actually happened (segments are split at midnight).
+- [x] Remove the dead `_on_video_loaded_for_usage`.
+- [x] Also fixed: reopening a book at a saved page counted the skipped pages as "pages advanced".
+- [x] Regression tests: idle → return → activity counts again; restored page; midnight split; focus loss; activity monitor throttling/filtering.
+- Doc: `docs/usage-time-tracking.md`.
 
 ---
 
-## 2. Must fix before going public
+## 2. Must fix before going public (DONE)
 
-- [ ] **Copyrighted material in git history.** Harry Potter PDFs (`immersion materials/HP.pdf` is tracked even though `.gitignore` excludes the folder), plus old `dist/*.exe` and `build/` files, are all in history. The repo is still private, so the cleanest fix is to publish a fresh repo or squash history rather than editing history file by file. Also delete the untracked `HP2.pdf` from the working tree.
-- [ ] **Personal info in the code.**
-  - `auto_miner.py` hard-codes two absolute paths to personal Obsidian vaults (`DEFAULT_INPUT_FILE`).
-  - `convert_to_h264.ps1` has a personal absolute default path.
-  - `TODO.md` has a personal note heading.
-  - Replace with arguments or config, and grep for `C:/Users` / `C:\Users` before publishing.
-- [ ] **Hard-coded Anki deck.** `src/immersion_app/core/anki.py` sets `DECK_NAME = "2025 Spanish Immersion"`, `MODEL_NAME = "Basic"`, fields `Front`/`Back`, and the AnkiConnect URL. Every other user's Anki check will fail. Make these settings, picked from AnkiConnect's `deckNames` / `modelNames` / `modelFieldNames`, with a mapping for the sentence and translation fields.
-- [ ] **No LICENSE file**, so nobody can legally reuse the code. Pick one (MIT, GPL-3.0, etc.) and check compatibility with dependencies (PySide6 is LGPL; PyMuPDF is AGPL/commercial, which matters for distributing binaries).
-- [ ] **googletrans caveat.** It's an unofficial Google scraper that breaks from time to time. Say so in the README and fail gracefully.
-- [ ] **Data folder sits inside the source tree** (`core/paths.py`: `PROJECT_ROOT / "data"`). In a packaged exe that's read-only (Program Files) or temporary (PyInstaller one-file temp dir), so data would be lost or fail to save. Move it to a per-user data folder (`%APPDATA%\LinguaLoop` via `platformdirs`), with a one-time migration from `./data`. The same applies to `auto_miner.py`'s `RECENT_SOURCES_PATH`.
-- [ ] **Junk to clean out:**
-  - stray `nul` file, `HP2.pdf`, `spanish_vocab.csv`
-  - leftover `apps/` folder (only `__pycache__` / empty test dirs)
-  - root `__pycache__/`
-  - duplicate docs in the root and `docs/` (`TODO.md`, `USAGE_TIME_TRACKING_IMPLEMENTATION.md`, `USAGE_TRACKING_INDICATOR.md`)
-  - `claude.md` and `AGENTS.md` (internal agent notes; move to `dev/` or drop)
-  - `android/` (half-built; remove it or mark it experimental)
-  - loose root scripts (`create_output_cards.py`, `vocab_counter.py`, `convert_to_h264.ps1`): move into `src/immersion_app/cli/` or `scripts/`
-
----
-
-## 3. Bugs and fragility
-
-- [ ] **The UI freezes while checking translation availability.** `TranslationService.is_mode_available()` runs on the UI thread (`main_window.py:1419-1449`). It opens a socket to `8.8.8.8:53` with a 2-second timeout and then calls the backend's own availability check. Offline mode can also load torch at that point. This happens at startup and on every translation-mode toggle. Move it to a `QRunnable` worker and update the badge when it finishes.
-- [ ] **AnkiConnect calls have no timeout** (`anki.py`, `anki_connect_invoke` → `urllib.request.urlopen(...)`). If Anki hangs, those calls hang with it. Add a timeout of a few seconds.
-- [ ] **`main_window.py` is about 2,500 lines and checks `hasattr(...)` 44 times.** Those checks mean setup order is fragile and quietly skips things, which is a big part of why the UI feels brittle. Controllers also reach into `self.window.*` directly. Per `AGENTS.md`, extract services and controllers and pass explicit dependencies, so these checks aren't needed.
-- [ ] **UI issues from the screenshots:**
-  - "Recent", "Open…" and "Open Source" do overlapping jobs. Consolidate.
-  - The "No document loaded" title sits in a white box in light mode.
-  - The "Library" empty-state text is pushed to the left instead of centered.
-  - The settings gear is barely visible in light mode.
-  - The page box shows "6" with no "of 146".
-  - The welcome screen has a lot of empty space; a first-run checklist could go there (see below).
-- [ ] **"Settings" isn't a settings dialog.** It's a menu stub (`main_window.py:985` has a `TODO` saying so). There's nowhere to set the deck, card fields, data folder or AnkiConnect URL. Build a real Settings dialog covering:
-  - Anki deck and note type, plus field mapping
-  - AnkiConnect URL
-  - learning and native language
-  - online/offline translation, and whether to prefetch
-  - data folder location
-  - appearance
-- [ ] **First-run experience.** Add a short checklist:
-  - Is AnkiConnect reachable? (show the add-on code `2055492159`)
-  - Pick a deck
-  - Pick languages
-  - Is FFmpeg available?
+- [x] **Copyrighted material in git history.** Removed from all commits with `git filter-repo`:
+  - `HP.pdf`, `immersion materials/HP.pdf`
+  - old `build/` and `dist/` (PyInstaller output that also embedded local paths)
+  - old screenshots/mockups showing book or show text
+  - `*.spec` files, a personal YouTube URL list, and the personal `automine_inputs.txt` word list
+  - personal paths scrubbed from old file contents with `--replace-text`
+  - Verified: no media files, build artefacts, personal paths or book text left in any commit.
+  - Pack size is now about 16 MB.
+  - A full pre-rewrite backup is in `archive/git-backup-before-history-rewrite.bundle` (git-ignored).
+  - `HP2.pdf` moved to `archive/` (ignored).
+- [x] **Personal info in the code.**
+  - `auto_miner.py` now defaults to `<data folder>/automine_inputs.md`, overridable with the `LINGUALOOP_AUTOMINE_FILE` env var or the `INPUT_FILE` argument. Also new: `--deck`.
+  - `scripts/convert_to_h264.ps1` defaults to the current directory.
+  - The personal heading in `TODO.md` is gone.
+  - Hard-coded Anki install path replaced with `%LOCALAPPDATA%` lookup.
+  - The test sentence quoting a copyrighted book was replaced.
+- [x] **Hard-coded Anki deck.** `core/anki.py` now has `AnkiSettings` (deck, note type, sentence/translation fields, tags, AnkiConnect URL). It's stored in `user_data["anki"]` and applied with `configure_anki()`.
+  - Edited in the new Settings dialog, with lists loaded live from AnkiConnect and a *Create deck* button.
+  - `check_anki_setup()` reports *why* Anki isn't ready.
+  - `cli/queue.py` and `auto_miner.py` use the same settings.
+  - The vocabulary snapshot ignores words from a different deck.
+- [x] **LICENSE**: GPL-3.0 (canonical text). Inter's OFL text bundled at `src/immersion_app/gui/fonts/OFL.txt`. Dependency licences listed in the README.
+- [x] **googletrans caveat** documented in the README (unofficial, may break or rate-limit; HTTP 429 seen during testing).
+- [x] **Data folder.** Moved to the per-user folder via `platformdirs` (`%APPDATA%\LinguaLoop` on Windows), with a `LINGUALOOP_DATA_DIR` override.
+  - One-time copy from `<repo>/data` on first start (`paths.migrate_legacy_data`). The old folder is left in place.
+  - Previews moved from `~/.lingua-loop` into the data folder.
+- [x] **Junk cleaned out.**
+  - Deleted: `nul`, `apps/`, root `__pycache__/`, duplicate root docs, and the stale usage-tracking docs (replaced by `docs/usage-time-tracking.md`).
+  - Moved to `archive/`: `HP2.pdf`, `spanish_vocab.csv`, `create_output_cards.py` (personal), `android/`.
+  - `vocab_counter.py` and `convert_to_h264.ps1` → `scripts/`.
+  - `docs/TODO.md` → `dev/TODO.md` (book excerpt removed).
+  - Kept `claude.md` and `AGENTS.md`, as requested.
 
 ---
 
-## 4. Tests
+## 3. Bugs and fragility (DONE, apart from the full `main_window.py` break-up)
 
-Current result (with workarounds): **216 passed, 3 failed, 5 errors.** The full `pytest tests` run won't start without exclusions.
-
-- [ ] `tests/test_logging_standalone.py` calls `exit(1)` when it's imported, which aborts the whole run. Convert it to real tests or move it out of `tests/`.
-- [ ] `tests/verify_refactor.py` is a script, not a test. Move it out of `tests/`.
-- [ ] `tests/test_vocab_counter.py` needs `bs4` (`beautifulsoup4`), which isn't in the requirements.
-- [ ] `pytest-qt` (the `qtbot` fixture) isn't in the requirements, which causes the 5 errors (`test_completion_tracker`, `test_usage_time_integration`).
-- [ ] `tests/core/test_anki_analytics_manager.py::test_record_successful_card_add_updates_counts_and_vocabulary` depends on today's date: the signal emits `today_count()` for the real date. Inject a clock or a date.
-- [ ] `tests/test_pdf_controller.py::test_click_updates_selection_and_requests_translation` calls `merge_highlight_bboxes`, which doesn't exist on the test's fake PDF service.
-- [ ] `tests/test_pdf_ui.py::test_pdf_status_bar_right_side_order_is_translation_anki_zoom` expects an older status-bar order (the usage indicator `○` now comes first).
-- [ ] `tests/test_completion_feature.py` returns a bool instead of asserting (pytest warning).
-- [ ] Split dev dependencies (`pytest`, `pytest-qt`) out of runtime `requirements.txt`, e.g. `pyproject.toml` optional dependencies `[dev]`.
-- [ ] Add CI: a GitHub Actions workflow running `pytest` with `QT_QPA_PLATFORM=offscreen` on Windows, plus Linux if supported.
-
----
-
-## 5. Docs
-
-- [ ] The README tells you to run `run_sentence_miner_gui.bat`, which doesn't exist (the real one is `run_lingualoop.bat`).
-- [ ] Rewrite the README for end users. Missing today:
-  - what the app does, with screenshots or a GIF
-  - download/install instructions (link to Releases)
-  - AnkiConnect install steps (add-on code `2055492159`)
-  - which deck and note type to create, and how to configure them
-  - FFmpeg setup for video and subtitles
-  - what online vs offline translation means, and the download size of offline models
-  - a keyboard-shortcut reference
-  - privacy: online mode sends words to Google
-  - supported languages and platforms
-- [ ] Add `CONTRIBUTING.md` (dev setup, running tests, architecture pointer) and issue/PR templates.
-- [ ] The architecture doc (`docs/architecture_design_readme.md`) is detailed but more useful to contributors than to users. Keep it under `docs/` or `dev/` and link it from CONTRIBUTING.
-- [ ] Tidy `docs/changelog.md` into a user-facing `CHANGELOG.md` with version numbers.
+- [x] **Translation availability check freezing the UI**: now `TranslationService.check_availability_async()` on a worker. The saved mode is used immediately, with automatic fallback when unavailable. Toggling re-checks in the background. The offline check no longer imports torch.
+- [x] **AnkiConnect timeouts**: 10 s per request, 60 s for bulk vocabulary fetches.
+- [x] **Anki add / queue processing on the UI thread**: moved to workers (`add_card_async`, `process_queue_async`) with double-submit guards. Connection drops during an add queue the card.
+- [x] **Worker errors silently swallowed** (found during the work): tasks caught `RuntimeError` around the whole job, so AnkiConnect errors ("duplicate note") and translation errors vanished and the UI got stuck. Now only the emit is guarded (`core/signals.safe_emit`).
+- [x] **Data-loss risks** (found during the work):
+  - Background saves ran on the shared pool and could finish out of order. They now use a single-thread save queue.
+  - The final save could be lost on exit. It's now flushed synchronously in `closeEvent`.
+  - The prefetch preference was dropped on every load.
+- [x] **Shutdown crashes** with translations in flight: pools are cleared and drained on close. Prefetch failures log one line instead of a traceback.
+- [~] **`main_window.py` size and `hasattr` guards**:
+  - Removed the dead duplicate translation pipeline and duplicate classes, plus the legacy PDF/video/add/queue bodies behind `if hasattr(self, "<x>_controller")`.
+  - Ported their tests to the controllers (`tests/gui/test_mining_controller.py`, `test_pdf_controller_navigation.py`, `test_video_controller.py`).
+  - 2,514 → 1,892 lines; 44 → 20 `hasattr` guards.
+  - **Remaining:** the 20 guards protect widget-creation order during `__init__`. Removing them safely is part of the full break-up (still to do).
+- [x] **UI issues from the screenshots:**
+  - [x] Duplicate open buttons: the welcome screen hides the top-bar Recent/Open/title, and *Open PDF or video…* is the primary button near the top.
+  - [x] "No document loaded" white box: fixed at the root cause. The command-bar stylesheet cascaded to every child label; it's now scoped by object name.
+  - [x] Library empty state: centred, outside the flow layout, smaller minimum height.
+  - [x] Settings gear: replaced by a labelled *Settings* button (Ctrl+,).
+  - [x] Page box shows `/ total`.
+  - [x] Empty space: the welcome page scrolls instead of squashing, the Recent section is hidden until something is opened, margins tightened.
+  - [x] Hard-coded colours in the status indicators replaced by new `Theme.SUCCESS/WARNING/DANGER` tokens.
+- [x] **Real Settings dialog** (`gui/widgets/settings_dialog.py` + `gui/controllers/settings_controller.py`) covering Anki, languages, online/offline translation, pre-translation, appearance, and the data folder (shown, with an Open button; relocation via `LINGUALOOP_DATA_DIR`).
+- [x] **First-run experience**: a *Getting started* checklist on the welcome screen (`gui/widgets/getting_started_panel.py`).
+  - Anki status says whether Anki is unreachable or the deck/note type/fields are wrong, and offers *Start Anki* or *Settings…*.
+  - Also shows the chosen languages and the first-open step.
+  - Hideable, and hides itself once complete.
+  - *Not done:* an FFmpeg check (only matters for subtitle generation).
+- [x] *Open data folder* works on macOS/Linux (was `explorer` only).
 
 ---
 
-## 6. Packaging as an installer
+## 4. Tests (DONE)
 
-The blocker is size. `torch`, `transformers` and `openai-whisper` add several GB, and a PyInstaller build that includes them would be huge and slow. The current `build_exe.bat` also uses the old name and won't pick up the font files (`src/immersion_app/gui/fonts`) or the logo (`img/`).
+Result now: **254 passed, 0 failed.** Plain `python -m pytest` works with no flags or `PYTHONPATH`.
 
-- [ ] Add a `pyproject.toml` with a `lingualoop` entry point, and make offline translation and subtitle generation optional add-ons.
-- [ ] Swap in lighter libraries that don't need torch:
-  - Argos Translate (ctranslate2) instead of MarianMT. `language_config.py` already has `argos` codes, so this may have been the plan.
-  - `faster-whisper` instead of `openai-whisper`.
-  - Download models on demand, into the user data folder.
-- [ ] Build with PyInstaller in **one-folder** mode (it starts faster than one-file and antivirus flags it less) using a `.spec` file that includes the fonts, images and Qt multimedia/FFmpeg plugins.
-- [ ] Wrap it in an **Inno Setup** installer (Start-menu shortcut, uninstaller, per-user install so no admin is needed).
-- [ ] Have a GitHub Action build it on tag push and attach it to each Release.
-- [ ] Bundle FFmpeg, or check for it on first run with a helpful message.
-- [ ] Unsigned exes trigger a SmartScreen warning. Mention that in the README, or consider code signing later.
-- [ ] Add a version number (`__version__`) and show it in the app.
-- [ ] Decide on macOS/Linux support. The current code is Windows-leaning (`auto_miner.py` uses `msvcrt`, `.bat`/`.ps1` scripts).
+- [x] `tests/test_logging_standalone.py` and `tests/verify_refactor.py` removed: script-style duplicates of existing tests.
+- [x] `beautifulsoup4` and `pytest-qt` added to `requirements-dev.txt`.
+- [x] Anki analytics test made date-independent (`AnkiAnalyticsManager(today=...)`).
+- [x] `test_pdf_controller` fake gained `merge_highlight_bboxes`. The status-bar order test was updated.
+- [x] `test_completion_feature.py` no longer returns a value. The deprecated `QMouseEvent` constructor was replaced.
+- [x] `tests/conftest.py`: puts `src/` on the path, uses a throwaway `LINGUALOOP_DATA_DIR`, and runs Qt offscreen, so tests can never touch real user data. Plus `pytest.ini`.
+- [x] Dev dependencies split into `requirements-dev.txt`. Runtime requirements split into `requirements.txt` (core), `requirements-offline.txt` and `requirements-media.txt`.
+- [x] CI: `.github/workflows/tests.yml` runs pytest on Windows and Ubuntu (Python 3.12), plus an informational pyflakes step. *Not yet run on GitHub; it will run on the first push.*
+- [x] New tests:
+  - tracker regressions, activity monitor
+  - Settings dialog/controller, Anki settings parsing
+  - data-folder resolution and migration
+  - ordered saves/flush and user-data normalisation
+  - mining-controller async add/queue flows
+  - PDF controller navigation/render against a generated PDF
+  - subtitle click/phrase selection, `auto_miner` defaults and `--deck`
 
 ---
 
-## 7. Integrate the auto-miner into LinguaLoop
+## 5. Docs (DONE)
 
-**Recommendation: yes.**
+- [x] README rewritten for end users:
+  - what it does, with screenshots (`docs/screenshots/`, generated from an original sample text, not copyrighted material)
+  - install steps, AnkiConnect setup (code 2055492159), first-run and deck setup
+  - FFmpeg, online vs offline translation (with privacy note and download size)
+  - a full shortcut table, the queue and study-time explanation, the data folder
+  - companion tools, troubleshooting, licences
+- [x] `CONTRIBUTING.md` (setup, tests, architecture in one minute, PR checklist). Issue templates (bug, feature) and a PR template under `.github/`.
+- [x] Architecture docs stay in `docs/` and are linked from CONTRIBUTING. `docs/architecture.md` was updated for the data folder, settings and tracking.
+- [x] `CHANGELOG.md` at the root:
+  - an *Unreleased: 0.9.0, first public release* section in Keep-a-Changelog style
+  - the previous dated log kept under "Development history"
+  - `AGENTS.md` now points to it
+- [x] Fonts README updated (bundled, OFL included).
 
-The logic is already reusable: `core/auto_mining.py`, `core/automine_queue.py` and `media/source_context.py` hold it, and `auto_miner.py` is mostly a terminal interface on top. In its current form it doesn't work as a public feature:
-- it's Windows-only (it reads keys with `msvcrt`)
-- it's hard-wired to a personal Obsidian vault
-- it needs a terminal and Python, which people installing an exe won't have
+---
 
-Two queues also confuse things: the app's JSON card queue (`data/queue/queued_cards.json`) and the markdown queue of words with their sources (`# <source>` sections).
+## 6. Packaging as an installer (TO DO)
 
-Plan:
+The blocker is size. `torch`, `transformers` and `openai-whisper` add several GB. The current `build_exe.bat` uses the old name and won't pick up the fonts or logo.
+
+- [~] Optional extras: done at the requirements level (`requirements-offline.txt`, `requirements-media.txt`). Still to do: a `pyproject.toml` with a `lingualoop` entry point and extras.
+- [ ] Swap in lighter libraries that don't need torch: Argos Translate (ctranslate2) instead of MarianMT, and `faster-whisper` instead of `openai-whisper`. Download models on demand into the data folder.
+- [ ] PyInstaller **one-folder** build with a `.spec` that bundles fonts, images and the Qt multimedia/FFmpeg plugins. Replace `build_exe.bat`.
+- [ ] **Inno Setup** installer (Start-menu shortcut, uninstaller, per-user install).
+- [ ] GitHub Action: build on tag push and attach to the Release.
+- [ ] Bundle FFmpeg, or check for it on first run (add to the Getting started checklist).
+- [ ] Mention the SmartScreen warning for unsigned exes in the README, or consider code signing.
+- [ ] Add `__version__` (0.9.0) and show it in the app. The changelog already uses 0.9.0.
+- [ ] Decide on macOS/Linux support (`auto_miner.py` uses `msvcrt`; `.bat`/`.ps1` scripts).
+- Note: the frozen-build data-folder problem is already solved (`platformdirs`; no writes next to the exe).
+
+---
+
+## 7. Integrate the auto-miner into LinguaLoop (TO DO)
+
+**Recommendation: yes.** The logic is already reusable (`core/auto_mining.py`, `core/automine_queue.py`, `media/source_context.py`). The hard-coded vault path is gone, and the CLI now shares the app's Anki settings and data folder.
+
 - [ ] Add a "Batch mine" screen in the app:
-  1. Paste or import words grouped by source (local PDF/SRT path or URL), or point it at a markdown file.
-  2. Review the matches one card at a time, with the same keys as the CLI: Enter to add, E to edit, arrows to pick an occurrence, `,` and `.` to move the sentence boundaries.
-  3. Cards go out through the app's existing Anki service (and its configurable deck).
-- [ ] Run source loading and candidate search in a `QRunnable` worker, per the architecture rules.
+  1. Paste or import words grouped by source, or point it at a markdown file.
+  2. Review matches one card at a time with the CLI's keys.
+  3. Send cards through the app's Anki service.
+- [ ] Run source loading and candidate search in a `QRunnable` worker.
 - [ ] Unify or clearly separate the two queues in the UI.
-- [ ] Keep the CLI as `lingualoop automine` for power users, with the input file given as an argument (no hard-coded default path).
+- [x] Keep the CLI with the input file as an argument and no hard-coded default path. *(Done; it currently stays at the repo root as `auto_miner.py`. Move it to `lingualoop automine` when the pyproject entry points exist.)*
+
+---
+
+## Release-day steps (TO DO, need you)
+
+1. Review the branch `public-release-prep`, then merge it into `master` (or make it the new `master`).
+2. **Force-push the rewritten history**: `git push --force origin master` (plus `public-release-prep` if you want it on GitHub).
+   - Every commit hash changed, so any other clone must be re-cloned.
+   - `filter-repo` turned the remote branch `claude/android-pdf-app-design-hDDy0` into a local branch. Decide whether to delete it on GitHub (`git push origin --delete claude/android-pdf-app-design-hDDy0`) or force-push its rewritten version.
+3. **Optional privacy step:** the commits carry your personal Gmail address as author email. To publish under GitHub's no-reply address instead, rewrite authors with `git filter-repo --mailmap` *before* force-pushing.
+4. On first launch after upgrading, open **Settings** and pick your existing deck. The new default is `LinguaLoop`, not the old hard-coded deck name. Your `data/` folder is copied to `%APPDATA%\LinguaLoop` automatically.
+5. If you keep the auto-miner word list in a notes vault, set `LINGUALOOP_AUTOMINE_FILE` to that file.
+6. Make the repo public; check that the CI run passes on GitHub.
+7. Optionally delete `archive/git-backup-before-history-rewrite.bundle` once you're happy (it still contains the old history, including the copyrighted files).
