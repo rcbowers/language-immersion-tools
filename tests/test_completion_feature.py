@@ -55,7 +55,6 @@ def test_completion_tracker():
     assert is_video_complete, "Video should be marked complete"
 
     print("\n[SUCCESS] All CompletionTracker tests passed!")
-    return True
 
 if __name__ == "__main__":
     try:

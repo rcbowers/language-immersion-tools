@@ -108,7 +108,7 @@ class PDFStatusBar(QWidget):
         right_layout.setSpacing(8)
 
         self.usage_tracking_label = QLabel("○")
-        self.usage_tracking_label.setToolTip("Usage tracking: Idle")
+        self.usage_tracking_label.setToolTip("Study time: paused (no input for 2 minutes, or LinguaLoop is not focused)")
         self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(active=False))
         right_layout.addWidget(self.usage_tracking_label, alignment=Qt.AlignmentFlag.AlignVCenter)
 
@@ -223,7 +223,7 @@ class PDFStatusBar(QWidget):
 
     def _get_usage_tracking_style(self, active: bool) -> str:
         """Get style for usage tracking indicator."""
-        color = "#4CAF50" if active else Theme.TEXT_MUTED  # Green when active, muted when idle
+        color = Theme.SUCCESS if active else Theme.TEXT_MUTED  # Green when active, muted when idle
         return f"""
             QLabel {{
                 color: {color};
@@ -346,8 +346,8 @@ class PDFStatusBar(QWidget):
         """Update usage tracking indicator."""
         if active:
             self.usage_tracking_label.setText("●")
-            self.usage_tracking_label.setToolTip("Usage tracking: Active (recording time)")
+            self.usage_tracking_label.setToolTip("Study time: recording")
         else:
             self.usage_tracking_label.setText("○")
-            self.usage_tracking_label.setToolTip("Usage tracking: Idle")
+            self.usage_tracking_label.setToolTip("Study time: paused (no input for 2 minutes, or LinguaLoop is not focused)")
         self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(active))

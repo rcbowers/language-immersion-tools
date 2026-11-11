@@ -1,0 +1,7 @@
+# Offline translation with MarianMT (Hugging Face). Several GB including torch;
+# models download on first use for each language pair.
+-r requirements.txt
+transformers>=4.30.0
+torch>=2.0.0
+sentencepiece>=0.1.99
+sacremoses>=0.0.53

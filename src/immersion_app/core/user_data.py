@@ -9,10 +9,35 @@ import os
 
 from PySide6.QtCore import QRunnable, QThreadPool
 
+from .anki import AnkiSettings
 from .language_config import DEFAULT_LEARNING_LANGUAGE, DEFAULT_NATIVE_LANGUAGE, normalize_language_code
 from .paths import LEGACY_USER_STATE_PATH, USER_STATE_PATH, ensure_runtime_dirs
 
 logger = logging.getLogger(__name__)
+
+
+# Saves run on a dedicated single-thread pool so they complete in the order
+# they were requested (a newer snapshot can never be overwritten by an older
+# one) and can be flushed on exit.
+_SAVE_POOL = QThreadPool()
+_SAVE_POOL.setMaxThreadCount(1)
+
+
+def _write_snapshot(snapshot: dict) -> None:
+    import time as _time
+    t0 = _time.perf_counter()
+    json_text = json.dumps(snapshot, ensure_ascii=False, indent=2)
+    json_ms = (_time.perf_counter() - t0) * 1000
+    size_kb = len(json_text) / 1024
+    if json_ms >= 50:
+        logger.warning("[SAVE-WORKER] json.dumps %.1fms | %.1f KB", json_ms, size_kb)
+    else:
+        logger.debug("[SAVE-WORKER] json.dumps %.1fms | %.1f KB", json_ms, size_kb)
+    USER_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = USER_STATE_PATH.with_suffix(".tmp")
+    temp_path.write_text(json_text, encoding="utf-8")
+    os.replace(temp_path, USER_STATE_PATH)
+    logger.debug("User data saved successfully")
 
 
 class _SaveWorker(QRunnable):
@@ -22,21 +47,22 @@ class _SaveWorker(QRunnable):
 
     def run(self):
         try:
-            import time as _time
-            t0 = _time.perf_counter()
-            json_text = json.dumps(self._snapshot, ensure_ascii=False, indent=2)
-            json_ms = (_time.perf_counter() - t0) * 1000
-            size_kb = len(json_text) / 1024
-            if json_ms >= 50:
-                logger.warning("[SAVE-WORKER] json.dumps %.1fms | %.1f KB", json_ms, size_kb)
-            else:
-                logger.debug("[SAVE-WORKER] json.dumps %.1fms | %.1f KB", json_ms, size_kb)
-            temp_path = USER_STATE_PATH.with_suffix(".tmp")
-            temp_path.write_text(json_text, encoding="utf-8")
-            os.replace(temp_path, USER_STATE_PATH)
-            logger.debug("User data saved successfully")
+            _write_snapshot(self._snapshot)
         except Exception as exc:
             logger.error("Background save failed: %s", exc)
+
+
+def flush_user_data(payload: dict | None = None, timeout_ms: int = 5000) -> None:
+    """Wait for pending background saves; if ``payload`` is given, write it synchronously last.
+
+    Call on shutdown so the final state (e.g. the last study session) is not lost.
+    """
+    _SAVE_POOL.waitForDone(timeout_ms)
+    if payload is not None:
+        try:
+            _write_snapshot(copy.deepcopy(payload))
+        except Exception as exc:
+            logger.error("Final save failed: %s", exc)
 
 
 def default_user_data():
@@ -52,6 +78,10 @@ def default_user_data():
             "video_playback_speed": 1.0,
             "theme_mode": "light",
             "prefetch_enabled": True,
+        },
+        "anki": AnkiSettings().to_dict(),
+        "onboarding": {
+            "dismissed": False,
         },
         "last_session": {
             "content_type": "",
@@ -115,7 +145,11 @@ def load_user_data():
         "translation_mode": str(preferences.get("translation_mode") or "online"),
         "video_playback_speed": float(preferences.get("video_playback_speed") or 1.0),
         "theme_mode": "dark" if str(preferences.get("theme_mode") or "").strip().lower() == "dark" else "light",
+        "prefetch_enabled": bool(preferences.get("prefetch_enabled", True)),
     }
+    payload["anki"] = AnkiSettings.from_dict(payload.get("anki")).to_dict()
+    onboarding = payload.get("onboarding") if isinstance(payload.get("onboarding"), dict) else {}
+    payload["onboarding"] = {"dismissed": bool(onboarding.get("dismissed", False))}
     payload["analytics"] = payload.get("analytics") or {
         "cards_added_total": 0,
         "cards_added_by_day": {},
@@ -178,4 +212,4 @@ def save_user_data(payload):
             "[SAVE] deepcopy %.1fms | vocab=%d sessions=%d",
             deepcopy_ms, vocab_len, sessions_len,
         )
-    QThreadPool.globalInstance().start(_SaveWorker(snapshot))
+    _SAVE_POOL.start(_SaveWorker(snapshot))

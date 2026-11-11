@@ -21,12 +21,17 @@ class MiningController(QObject):
         self.anki_analytics = anki_analytics
         self.current_request_id = 0
         self._pending_translation_text = ""
+        self._add_in_flight = False
+        self._queue_processing = False
 
         self.selection.selection_changed.connect(self.window._update_selection_panel)
         self.selection.selection_changed.connect(self.window._update_action_buttons)
         self.translation_service.translation_ready.connect(self._on_translation_ready)
         self.translation_service.translation_failed.connect(self._on_translation_failed)
         self.translation_service.batch_failed.connect(lambda message: logger.warning("Batch translation prefetch failed: %s", message))
+        self.anki_service.card_added.connect(self._on_card_added)
+        self.anki_service.card_add_failed.connect(self._on_card_add_failed)
+        self.anki_service.queue_entries_processed.connect(self._on_queue_entries_processed)
 
     def set_languages(self, learning_language: str, native_language: str):
         self.translation_service.set_languages(learning_language, native_language)
@@ -74,23 +79,40 @@ class MiningController(QObject):
         )
 
     def add_now(self):
+        """Add the current selection to Anki on a worker thread (never blocks the UI)."""
         if not self.selection.word or not self.selection.translation or self.selection.translation == "translating...":
+            return
+        if self._add_in_flight:
             return
         if not self.anki_service.is_connected:
             self.queue_for_later("AnkiConnect is not available")
             return
         note_sentence = self.window._build_note_sentence()
-        try:
-            note_id = self.anki_service.add_card_now(note_sentence, self.selection.word, self.selection.translation)
-        except ConnectionError as exc:
-            self.queue_for_later(str(exc))
-            return
-        except Exception as exc:
-            QMessageBox.critical(self.window, "Anki Add Failed", str(exc))
-            return
-        self.window._record_successful_card_add(self.selection.word)
-        self.window._show_card_feedback("Added to Anki", note_sentence, "added", note_id=note_id)
+        # Capture everything needed now: the selection may change before the worker finishes.
+        queue_payload = self.queue_payload()
+        self._add_in_flight = True
+        self.window._set_status("Adding to Anki…")
+        self.anki_service.add_card_async(
+            note_sentence,
+            self.selection.word,
+            self.selection.translation,
+            queue_payload=queue_payload,
+        )
+
+    def _on_card_added(self, result: dict):
+        self._add_in_flight = False
+        self.window._record_successful_card_add(result["word"])
+        self.window._show_card_feedback("Added to Anki", result["sentence"], "added", note_id=result.get("note_id"))
         self.window._close_popover()
+
+    def _on_card_add_failed(self, payload: dict, message: str, is_connection_error: bool):
+        self._add_in_flight = False
+        if is_connection_error:
+            queue_payload = payload.get("queue_payload")
+            if queue_payload:
+                self._queue_payload_for_later(queue_payload, message)
+            return
+        QMessageBox.critical(self.window, "Anki Add Failed", message)
 
     def add_to_queue(self):
         if not self.selection.word or not self.selection.translation or self.selection.translation == "translating...":
@@ -104,7 +126,9 @@ class MiningController(QObject):
             QMessageBox.critical(self.window, "Queue Write Failed", str(exc))
 
     def queue_for_later(self, reason: str):
-        payload = self.queue_payload()
+        self._queue_payload_for_later(self.queue_payload(), reason)
+
+    def _queue_payload_for_later(self, payload: dict, reason: str):
         try:
             self.anki_service.queue_card(payload)
             self.window._refresh_queue_summary()
@@ -113,6 +137,9 @@ class MiningController(QObject):
             QMessageBox.critical(self.window, "Queue Write Failed", str(exc))
 
     def process_queue(self):
+        """Send all queued cards to Anki on a worker thread."""
+        if self._queue_processing:
+            return
         entries_count = len(load_queue_entries())
         if not entries_count:
             QMessageBox.information(self.window, "Queue Empty", "No queued cards found.")
@@ -120,10 +147,20 @@ class MiningController(QObject):
         if not self.anki_service.is_connected:
             QMessageBox.warning(self.window, "Anki Not Connected", "AnkiConnect is not available.")
             return
-        successful_entries, failed_entries = self.anki_service.process_queue_now()
+        self._queue_processing = True
+        self.window._set_status(f"Sending {entries_count} queued card(s) to Anki…")
+        self.anki_service.process_queue_async()
+
+    def _on_queue_entries_processed(self, successful_entries: list, failed_entries: list):
+        was_user_request = self._queue_processing
+        self._queue_processing = False
         for entry in successful_entries:
             self.window._record_successful_card_add(entry["word"])
         self.window._refresh_queue_summary()
+        if hasattr(self.window, "queue_dialog") and self.window.queue_dialog is not None:
+            self.window.queue_dialog.refresh(load_queue_entries())
+        if not was_user_request:
+            return
         QMessageBox.information(
             self.window,
             "Queue Processed",

@@ -334,7 +334,7 @@ tests/
 After implementing features:
 
 - [ ] Update this document if you discovered new patterns
-- [ ] Add entry to `changelog.md`
+- [ ] Add entry under *Unreleased* in `CHANGELOG.md`
 - [ ] Ensure tests are passing
 - [ ] Update `architecture_design_readme.md` if architectural decisions were made
 

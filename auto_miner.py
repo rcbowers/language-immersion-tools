@@ -23,7 +23,14 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from immersion_app.core.anki import add_anki_card, start_anki_if_needed, test_anki_connection
+from immersion_app.core.anki import (
+    AnkiSettings,
+    add_anki_card,
+    configure_anki,
+    get_anki_settings,
+    start_anki_if_needed,
+    test_anki_connection,
+)
 from immersion_app.core.automine_queue import (
     QueueSection,
     is_inline_source,
@@ -51,27 +58,29 @@ from immersion_app.integrations.translation_backends import (
     TranslationBackend,
 )
 from immersion_app.media.source_context import load_source_contexts
+from immersion_app.core.paths import AUTOMINE_RECENT_SOURCES_PATH, DATA_ROOT
+from immersion_app.core.user_data import load_user_data
 
 
-# The queue lives in the Obsidian vault and is addressed absolutely so it is
-# found regardless of the directory from which the command is launched.
-# Explicit input-file arguments remain relative to the caller's current directory.
-_PRIMARY_VAULT_INPUT_FILE = Path(
-    "~/notes/automine_inputs.md"
-)
-_OTHER_VAULT_INPUT_FILE = Path(
-    "~/notes/automine_inputs.md"
-)
-DEFAULT_INPUT_FILE = (
-    _PRIMARY_VAULT_INPUT_FILE
-    if _PRIMARY_VAULT_INPUT_FILE.parent.is_dir()
-    else _OTHER_VAULT_INPUT_FILE
-)
+# Default queue file. Override with the INPUT_FILE argument or the
+# LINGUALOOP_AUTOMINE_FILE environment variable (e.g. to keep the queue in a
+# notes vault). Relative paths resolve against the current directory.
+AUTOMINE_FILE_ENV_VAR = "LINGUALOOP_AUTOMINE_FILE"
+
+
+def default_input_file() -> Path:
+    override = os.environ.get(AUTOMINE_FILE_ENV_VAR, "").strip()
+    if override:
+        return Path(override).expanduser()
+    return DATA_ROOT / "automine_inputs.md"
+
+
+DEFAULT_INPUT_FILE = default_input_file()
 CARD_MIN_CONTENT_WIDTH = 40
 CARD_MAX_CONTENT_WIDTH = 72
 CARD_VERTICAL_PADDING = 2
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-RECENT_SOURCES_PATH = PROJECT_ROOT / "data" / "state" / "automine_recent_sources.json"
+RECENT_SOURCES_PATH = AUTOMINE_RECENT_SOURCES_PATH
 MAX_RECENT_SOURCES = 10
 
 
@@ -140,10 +149,27 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--source-lang", default="es", choices=sorted(SUPPORTED_LANGUAGES))
     parser.add_argument("--target-lang", default="en", choices=sorted(SUPPORTED_LANGUAGES))
+    parser.add_argument(
+        "--deck",
+        default=None,
+        help="Anki deck to add cards to (default: the deck chosen in LinguaLoop's Settings).",
+    )
     args = parser.parse_args(argv)
     if args.input_file is None:
-        args.input_file = Path(DEFAULT_INPUT_FILE)
+        args.input_file = default_input_file()
     return args
+
+
+def configure_anki_from_user_settings(deck_override: str | None = None) -> AnkiSettings:
+    """Use the same Anki deck/note type/fields as the desktop app (optionally overriding the deck)."""
+    try:
+        settings = AnkiSettings.from_dict(load_user_data().get("anki"))
+    except Exception:  # pragma: no cover - corrupt state falls back to defaults
+        settings = AnkiSettings()
+    if deck_override:
+        settings = settings.with_changes(deck_name=deck_override)
+    configure_anki(settings)
+    return settings
 
 
 # The recent-sources picker below is disabled: sources now come from the '# '
@@ -609,6 +635,7 @@ def review_candidates(
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    configure_anki_from_user_settings(args.deck)
     if not sys.stdin.isatty():
         print("Error: auto_miner must be run in an interactive terminal.", file=sys.stderr)
         return 1
@@ -629,7 +656,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if started_anki:
         print("Started Anki and connected to AnkiConnect.")
     if not test_anki_connection():
-        print("Error: AnkiConnect, the LinguaLoop deck, or the Basic model is unavailable.", file=sys.stderr)
+        settings = get_anki_settings()
+        print(
+            f"Error: AnkiConnect is unavailable, or deck '{settings.deck_name}' / note type "
+            f"'{settings.note_type}' does not exist. Choose them in LinguaLoop's Settings or pass --deck.",
+            file=sys.stderr,
+        )
         return 1
 
     translator = FallbackTranslator(

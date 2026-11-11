@@ -1,0 +1,8 @@
+# Test and lint tooling. The suite does not need the offline/media extras
+# except for the vocab-counter script tests.
+-r requirements.txt
+pytest>=8.0.0
+pytest-qt>=4.4.0
+pyflakes>=3.0.0
+matplotlib>=3.8.0
+beautifulsoup4>=4.12.0

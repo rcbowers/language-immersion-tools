@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import socket
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+
+from immersion_app.core.signals import safe_emit
 
 from immersion_app.core.language_config import get_google_language_code, get_marian_language_code
 from immersion_app.integrations.translation_backends import MarianMTTranslationBackend, OnlineTranslationBackend
@@ -32,15 +35,14 @@ class TranslateTask(QRunnable):
     def run(self):
         try:
             translated_text = self.backend.translate(self.text, self.src_lang, self.dest_lang)
-            self.signals.finished.emit(self.request_id, self.text, translated_text, self.visible)
-        except RuntimeError:
-            return
         except Exception as exc:
-            logger.error("Translation worker failed (request_id=%s): %s", self.request_id, exc, exc_info=True)
-            try:
-                self.signals.failed.emit(self.request_id, self.text, str(exc), self.visible)
-            except RuntimeError:
-                return
+            if self.visible:
+                logger.error("Translation failed (request_id=%s): %s", self.request_id, exc, exc_info=True)
+            else:  # background prefetch: expected to fail sometimes (offline, rate limits)
+                logger.warning("Prefetch translation failed for %r: %s", self.text, exc or type(exc).__name__)
+            safe_emit(self.signals.failed, self.request_id, self.text, str(exc), self.visible)
+            return
+        safe_emit(self.signals.finished, self.request_id, self.text, translated_text, self.visible)
 
 
 class BatchTranslateSignals(QObject):
@@ -63,15 +65,45 @@ class BatchTranslateTask(QRunnable):
                 translations = self.backend.translate_batch(self.texts, self.src_lang, self.dest_lang)
             else:
                 translations = [self.backend.translate(text, self.src_lang, self.dest_lang) for text in self.texts]
-            self.signals.finished.emit(self.texts, translations)
-        except RuntimeError:
-            return
         except Exception as exc:
             logger.warning("Batch translation failed: %s", exc, exc_info=True)
+            safe_emit(self.signals.failed, self.texts, str(exc))
+            return
+        safe_emit(self.signals.finished, self.texts, translations)
+
+
+def probe_mode_available(mode: str) -> bool:
+    """Check whether a translation mode can be used. Blocking (network / imports): call off the UI thread."""
+    if mode == "online":
+        try:
+            with socket.create_connection(("8.8.8.8", 53), timeout=2):
+                pass
+        except OSError:
+            return False
+        return OnlineTranslationBackend().is_available()
+    # Offline: only check the packages are installed; importing torch here would be slow.
+    return all(importlib.util.find_spec(name) is not None for name in ("transformers", "torch", "sentencepiece"))
+
+
+class AvailabilitySignals(QObject):
+    finished = Signal(dict)
+
+
+class AvailabilityTask(QRunnable):
+    def __init__(self, probe=probe_mode_available):
+        super().__init__()
+        self._probe = probe
+        self.signals = AvailabilitySignals()
+
+    def run(self):
+        result = {}
+        for mode in ("online", "offline"):
             try:
-                self.signals.failed.emit(self.texts, str(exc))
-            except RuntimeError:
-                return
+                result[mode] = bool(self._probe(mode))
+            except Exception as exc:  # never let a probe crash the worker
+                logger.warning("Availability probe for %s failed: %s", mode, exc)
+                result[mode] = False
+        safe_emit(self.signals.finished, result)
 
 
 class TranslationService(QObject):
@@ -80,6 +112,7 @@ class TranslationService(QObject):
     batch_ready = Signal(list, list)
     batch_failed = Signal(str)
     mode_changed = Signal(str)
+    availability_changed = Signal(dict)  # {"online": bool, "offline": bool}
 
     def __init__(
         self,
@@ -107,6 +140,7 @@ class TranslationService(QObject):
         self._online_backend = None
         self._offline_backend = None
         self.prefetch_enabled: bool = True
+        self.availability: dict[str, bool | None] = {"online": None, "offline": None}
 
     def set_languages(self, learning_language: str, native_language: str):
         self.learning_language = learning_language
@@ -119,6 +153,12 @@ class TranslationService(QObject):
 
     def set_prefetch_enabled(self, enabled: bool):
         self.prefetch_enabled = enabled
+
+    def shutdown(self, timeout_ms: int = 1500) -> None:
+        """Cancel queued prefetch work and wait briefly for running requests (call on app exit)."""
+        self.prefetch_enabled = False
+        self._prefetch_pool.clear()
+        self._prefetch_pool.waitForDone(timeout_ms)
 
     def clear_cache(self):
         self.translation_cache.clear()
@@ -190,15 +230,18 @@ class TranslationService(QObject):
         self._thread_pool.start(task)
 
     def is_mode_available(self, mode: str) -> bool:
-        if mode == "online":
-            try:
-                socket.create_connection(("8.8.8.8", 53), timeout=2)
-            except OSError:
-                return False
-            backend = self._online_backend if self._online_backend is not None else OnlineTranslationBackend()
-            return backend.is_available()
-        backend = self._offline_backend if self._offline_backend is not None else MarianMTTranslationBackend()
-        return backend.is_available()
+        """Blocking availability check. Prefer :meth:`check_availability_async` from the UI thread."""
+        return probe_mode_available(mode)
+
+    def check_availability_async(self) -> None:
+        """Probe online/offline availability in the background; emits ``availability_changed``."""
+        task = AvailabilityTask()
+        task.signals.finished.connect(self._on_availability_checked)
+        self._thread_pool.start(task)
+
+    def _on_availability_checked(self, result: dict) -> None:
+        self.availability = {"online": bool(result.get("online")), "offline": bool(result.get("offline"))}
+        self.availability_changed.emit(dict(self.availability))
 
     def _translation_cache_key(self, text: str):
         return (self.learning_language, self.native_language, text)

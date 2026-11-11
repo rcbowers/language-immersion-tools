@@ -1,10 +1,21 @@
+# Local-only material (copyrighted texts/videos, personal scripts, archived experiments)
 immersion materials/
-.claude/
-.venv/
-.idea/
+archive/
 to_subtitle/
-__pycache__/
-apps/**/__pycache__/
 downloads/
+
+# Runtime data from pre-1.0 source checkouts (now stored in the per-user data folder)
 data/
+
+# Python / tooling
+.venv/
+__pycache__/
 *.pyc
+.pytest_cache/
+build/
+dist/
+
+# Editors / agents
+.idea/
+.vscode/
+.claude/

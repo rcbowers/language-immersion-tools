@@ -33,7 +33,7 @@ class AnkiAnalyticsManagerTests(unittest.TestCase):
 
     def test_record_successful_card_add_updates_counts_and_vocabulary(self):
         user_data = default_user_data()
-        manager = AnkiAnalyticsManager(user_data, snapshot_words={"adios"})
+        manager = AnkiAnalyticsManager(user_data, snapshot_words={"adios"}, today=lambda: datetime(2026, 5, 11).date())
         capture = SignalCapture()
         manager.stats_changed.connect(capture.on_stats_changed)
 

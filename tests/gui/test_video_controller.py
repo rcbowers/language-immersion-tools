@@ -122,3 +122,52 @@ class VideoControllerRestoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VideoControllerSubtitleClickTests(unittest.TestCase):
+    """Clicking subtitle words selects them and requests a translation (ported from the legacy window path)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _make(self, text):
+
+
+        from immersion_app.core.selection_state import SelectionState
+        from immersion_app.core.video_service import VideoService
+        from immersion_app.media.subtitle_parser import SRTParser
+
+        subtitle = SRTParser.from_text(f"1\n00:00:00,000 --> 00:00:02,000\n{text}").subtitles[0]
+        requested, highlighted = [], []
+        window = _make_window(MockMediaPlayer())
+        window.selection = SelectionState()
+        window._clean_word = lambda value: value.strip(".,¿?¡!").strip()
+        window._fmt_ms = lambda ms: "00:00"
+        window.subtitle_label = SimpleNamespace(highlight_word_range=lambda a, b: highlighted.append((a, b)))
+        mining = SimpleNamespace(request_translation=requested.append, prefetch_translations=lambda *a: None)
+        ctrl = VideoController(window, VideoService(), mining)
+        ctrl.current_subtitle = subtitle
+        return ctrl, window, subtitle, requested, highlighted
+
+    def test_click_selects_word_and_requests_translation(self):
+        from PySide6.QtCore import Qt
+
+        ctrl, window, subtitle, requested, highlighted = self._make("hola, mundo cruel.")
+        ctrl.on_subtitle_click(0, Qt.KeyboardModifier.NoModifier)
+
+        self.assertEqual(window.selection.word, "hola")
+        self.assertEqual(window.selection.sentence, subtitle.text)
+        self.assertEqual(requested, ["hola"])
+        self.assertEqual(highlighted, [(0, 0)])
+
+    def test_shift_click_extends_to_phrase_with_punctuation(self):
+        from PySide6.QtCore import Qt
+
+        ctrl, window, _subtitle, requested, highlighted = self._make("hola, mundo cruel.")
+        ctrl.on_subtitle_click(0, Qt.KeyboardModifier.NoModifier)
+        ctrl.on_subtitle_click(2, Qt.KeyboardModifier.ShiftModifier)
+
+        self.assertEqual(window.selection.word, "hola mundo cruel")
+        self.assertEqual(requested[-1], "hola, mundo cruel")  # inner punctuation kept for the translator
+        self.assertEqual(highlighted[-1], (0, 2))

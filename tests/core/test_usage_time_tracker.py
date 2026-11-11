@@ -367,6 +367,7 @@ class TestEdgeCases:
         tracker.set_window_focused(True)
 
         tracker.on_document_loaded("C:\\test\\book.pdf")
+        tracker.set_pdf_page_index(0)
         tracker.set_pdf_page_index(4)
         tracker.update_location("Page 5")
         tracker.record_activity()
@@ -387,6 +388,7 @@ class TestEdgeCases:
         tracker.set_window_focused(True)
 
         tracker.on_video_loaded("C:\\test\\video.mp4")
+        tracker.set_video_position_ms(0)
         tracker.set_video_position_ms(120000)
         tracker.record_activity()
         tracker.finalize_current_session()
@@ -433,3 +435,102 @@ class TestDataPersistence:
         # Should calculate today's usage correctly
         today_usage = tracker.get_today_usage_seconds()
         assert today_usage == 900
+
+
+class TestIdleAndResume:
+    """Regression tests for idle handling (tracking must resume after a break)."""
+
+    @patch("immersion_app.core.usage_time_tracker.save_user_data")
+    def test_activity_after_idle_starts_new_segment(self, mock_save, empty_user_data):
+        tracker = UsageTimeTracker(empty_user_data)
+        tracker.set_window_focused(True)
+        tracker.on_document_loaded("C:\test\book.pdf")
+        tracker.record_activity()
+
+        # Simulate 3 minutes of idleness, then the inactivity check.
+        tracker._activity_buffer = [datetime.now() - timedelta(minutes=3)]
+        tracker._check_inactivity()
+        assert not tracker.is_currently_active()
+        assert len(empty_user_data["usage_time"]["sessions"]) == 1
+
+        # The user comes back: activity must count again on the same file.
+        tracker.record_activity()
+        assert tracker.is_currently_active()
+        assert len(tracker._activity_buffer) == 1
+
+        tracker.finalize_current_session()
+        sessions = empty_user_data["usage_time"]["sessions"]
+        assert len(sessions) == 2
+        assert sessions[1]["file_path"] == sessions[0]["file_path"]
+
+    @patch("immersion_app.core.usage_time_tracker.save_user_data")
+    def test_idle_segment_keeps_page_progress_continuous(self, mock_save, empty_user_data):
+        tracker = UsageTimeTracker(empty_user_data)
+        tracker.set_window_focused(True)
+        tracker.on_document_loaded("C:\test\book.pdf")
+        tracker.set_pdf_page_index(2)
+        tracker.record_activity()
+        tracker.set_pdf_page_index(3)
+        tracker._activity_buffer = [datetime.now() - timedelta(minutes=3)]
+        tracker._check_inactivity()
+
+        tracker.set_pdf_page_index(5)
+        tracker.record_activity()
+        tracker.finalize_current_session()
+
+        first, second = empty_user_data["usage_time"]["sessions"]
+        assert (first["metadata"]["start_page_index"], first["metadata"]["end_page_index"]) == (2, 3)
+        assert (second["metadata"]["start_page_index"], second["metadata"]["end_page_index"]) == (3, 5)
+
+    @patch("immersion_app.core.usage_time_tracker.save_user_data")
+    def test_restored_page_is_not_counted_as_progress(self, mock_save, empty_user_data):
+        tracker = UsageTimeTracker(empty_user_data)
+        tracker.set_window_focused(True)
+        tracker.on_document_loaded("C:\test\book.pdf")
+        tracker.set_pdf_page_index(40)  # reopened at a saved position
+        tracker.record_activity()
+        tracker.finalize_current_session()
+
+        metadata = empty_user_data["usage_time"]["sessions"][0]["metadata"]
+        assert metadata["start_page_index"] == 40
+        assert metadata["pages_advanced"] == 0
+
+    def test_no_activity_without_open_file(self, empty_user_data):
+        tracker = UsageTimeTracker(empty_user_data)
+        tracker.set_window_focused(True)
+        tracker.record_activity()
+        assert tracker._activity_buffer == []
+        assert not tracker.is_currently_active()
+
+    def test_losing_focus_marks_idle_immediately(self, empty_user_data):
+        tracker = UsageTimeTracker(empty_user_data)
+        statuses = []
+        tracker.active_status_changed.connect(statuses.append)
+        tracker.set_window_focused(True)
+        tracker.on_document_loaded("C:\test\book.pdf")
+        tracker.record_activity()
+        tracker.set_window_focused(False)
+        assert statuses == [True, False]
+
+
+class TestMidnightSplit:
+    """Time is credited to the calendar day it happened on."""
+
+    @patch("immersion_app.core.usage_time_tracker.save_user_data")
+    def test_segment_spanning_midnight_is_split(self, mock_save, empty_user_data):
+        tracker = UsageTimeTracker(empty_user_data)
+        tracker.set_window_focused(True)
+        tracker.on_document_loaded("C:\test\book.pdf")
+
+        midnight = datetime.combine(datetime.now().date(), datetime.min.time())
+        tracker._session_start_time = midnight - timedelta(minutes=5)
+        # Activities every 30 s from 23:58 to 00:02 -> one merged window 23:57..00:03
+        tracker._activity_buffer = [midnight + timedelta(seconds=offset) for offset in range(-120, 121, 30)]
+        tracker.finalize_current_session()
+
+        sessions = empty_user_data["usage_time"]["sessions"]
+        assert len(sessions) == 2
+        assert [s["duration_seconds"] for s in sessions] == [180, 180]
+        assert datetime.fromisoformat(sessions[0]["start_time"]).date() == (midnight - timedelta(days=1)).date()
+        assert datetime.fromisoformat(sessions[1]["start_time"]).date() == midnight.date()
+        assert empty_user_data["usage_time"]["total_seconds"] == 360

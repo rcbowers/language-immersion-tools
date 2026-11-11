@@ -14,6 +14,16 @@ The repo is organized around one desktop app: `immersion_app`.
 
 ## Runtime Data Policy
 
-Repo-tracked source code stays under `src/`.
-Generated queue/session/log data goes under `data/`.
-Legacy root data files are treated as import/fallback sources, not the preferred storage location.
+Repo-tracked source code stays under `src/`. Nothing is written inside the source tree or install folder at runtime.
+
+Generated state (user data, card queue, logs, Anki vocabulary snapshot, previews) lives in the per-user data folder from `immersion_app.core.paths.DATA_ROOT`: `%APPDATA%\LinguaLoop` on Windows, `~/Library/Application Support/LinguaLoop` on macOS, `~/.local/share/LinguaLoop` on Linux. The `LINGUALOOP_DATA_DIR` environment variable overrides it (the test suite uses this).
+
+A pre-1.0 `<repo>/data` folder is copied into the new location once (`paths.migrate_legacy_data`, called from `app.main`) and left in place. Legacy root files (`words_to_process.txt`, `sentence_miner_user_data.json`) are still read as fallback import sources.
+
+## Settings
+
+User-configurable Anki settings (deck, note type, field mapping, tags, AnkiConnect URL) live in `user_data["anki"]`. They're loaded into `core.anki.AnkiSettings` and applied with `configure_anki()` at startup and whenever the Settings dialog is saved (`gui/controllers/settings_controller.py`). The CLIs (`cli/queue.py`, `auto_miner.py`) read the same settings.
+
+## Study-time tracking
+
+See [usage-time-tracking.md](usage-time-tracking.md).

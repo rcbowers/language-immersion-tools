@@ -152,7 +152,7 @@ class ContentBrowserGrid(QWidget):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll_area.setMinimumHeight(600)
+        self.scroll_area.setMinimumHeight(240)
 
         # Container for grid items with flow layout
         self.grid_container = QWidget()
@@ -160,6 +160,12 @@ class ContentBrowserGrid(QWidget):
 
         self.scroll_area.setWidget(self.grid_container)
         main_layout.addWidget(self.scroll_area)
+
+        # Empty state lives outside the flow layout so it can be centred.
+        self.empty_label = QLabel("No content yet\nPDFs and videos you open will appear here")
+        self.empty_label.setAlignment(Qt.AlignCenter)
+        self.empty_label.setWordWrap(True)
+        main_layout.addWidget(self.empty_label)
 
         # Populate grid
         self.refresh()
@@ -190,6 +196,17 @@ class ContentBrowserGrid(QWidget):
         # Get all content
         content_items = self.content_browser_manager.get_all_content()
 
+        self.scroll_area.setVisible(bool(content_items))
+        self.empty_label.setVisible(not content_items)
+        self.empty_label.setStyleSheet(f"""
+            QLabel {{
+                color: {Theme.TEXT_MUTED};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 14px;
+                padding: 24px 20px;
+            }}
+        """)
+
         if content_items:
             # Add each content item
             for content_data in content_items:
@@ -200,19 +217,6 @@ class ContentBrowserGrid(QWidget):
 
                 # Load preview (sync from cache or async generation)
                 self._load_preview_for_item(item, content_data)
-        else:
-            # Show empty state
-            empty_label = QLabel("No content yet\nOpen PDFs and videos to build your library")
-            empty_label.setAlignment(Qt.AlignCenter)
-            empty_label.setStyleSheet(f"""
-                QLabel {{
-                    color: {Theme.TEXT_MUTED};
-                    font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
-                    font-size: 14px;
-                    padding: 60px 20px;
-                }}
-            """)
-            self.grid_layout.addWidget(empty_label)
 
     def _load_preview_for_item(self, item: ContentBrowserItem, content_data: dict):
         """Load preview for a content item (sync from cache or async generation)."""

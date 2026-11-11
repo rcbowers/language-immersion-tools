@@ -8,6 +8,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import QApplication
 
 from immersion_app.core.selection_state import SelectionState
+from immersion_app.core.pdf_service import PDFService
 from immersion_app.gui.controllers.pdf_controller import PDFController
 
 
@@ -23,6 +24,10 @@ class _PdfService:
 
     def extract_context(self, selected_words, line_map):
         return "hola mundo"
+
+    def merge_highlight_bboxes(self, selected_words):
+        # Pure geometry helper: reuse the real implementation.
+        return PDFService.merge_highlight_bboxes(self, selected_words)
 
 
 class _MiningController:

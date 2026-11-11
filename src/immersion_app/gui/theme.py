@@ -27,6 +27,9 @@ class Theme:
             "HL_SEEN": "rgba(91,108,255,0.10)",
             "HL_NEW": "rgba(91,108,255,0.0)",
             "HL_SELECTED": "rgba(91,108,255,0.35)",
+            "SUCCESS": "#16a34a",
+            "WARNING": "#b45309",
+            "DANGER": "#dc2626",
         },
         "dark": {
             "BG": "#111318",
@@ -46,6 +49,9 @@ class Theme:
             "HL_SEEN": "rgba(124,140,255,0.18)",
             "HL_NEW": "rgba(124,140,255,0.03)",
             "HL_SELECTED": "rgba(124,140,255,0.38)",
+            "SUCCESS": "#4ade80",
+            "WARNING": "#fbbf24",
+            "DANGER": "#f87171",
         },
     }
 
@@ -75,6 +81,16 @@ class Theme:
     HL_SEEN = ""
     HL_NEW = ""
     HL_SELECTED = ""
+
+    # Status Colors
+    SUCCESS = ""
+    WARNING = ""
+    DANGER = ""
+
+    # Dialog layout
+    DIALOG_MARGIN = 20
+    DIALOG_SPACING = 12
+    SETTINGS_DIALOG_WIDTH = 560
 
     # Typography
     FONT_FAMILY = "Inter"
@@ -150,11 +166,26 @@ class Theme:
 
     @staticmethod
     def apply_command_bar_style(widget: QWidget) -> None:
-        """Apply command bar styling to a widget."""
+        """Apply command bar styling to a widget.
+
+        The selector is scoped to the bar's object name: a bare ``QWidget``
+        selector cascades to every child label, giving each its own
+        background box and bottom border.
+        """
+        from PySide6.QtCore import Qt
+
+        if not widget.objectName():
+            widget.setObjectName("CommandBar")
+        widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        name = widget.objectName()
         widget.setStyleSheet(f"""
-            QWidget {{
+            #{name} {{
                 background-color: {Theme.SURFACE};
                 border-bottom: 1px solid {Theme.BORDER};
+            }}
+            #{name} QLabel {{
+                background-color: transparent;
+                border: none;
             }}
         """)
 
@@ -208,7 +239,7 @@ class Theme:
                     background-color: {Theme.SURFACE_ALT};
                 }}
                 QPushButton:pressed {{
-                    background-color: #e4e4e7;
+                    background-color: {Theme.BORDER_STRONG};
                 }}
             """
         elif variant == "ghost":
@@ -226,7 +257,7 @@ class Theme:
                     background-color: {Theme.SURFACE_ALT};
                 }}
                 QPushButton:pressed {{
-                    background-color: #e4e4e7;
+                    background-color: {Theme.BORDER_STRONG};
                 }}
             """
         elif variant == "compact_accent":
@@ -279,6 +310,83 @@ class Theme:
             }}
             QCheckBox::indicator:hover {{
                 border-color: {Theme.ACCENT};
+            }}
+        """
+
+    @staticmethod
+    def get_combo_style() -> str:
+        """Stylesheet for combo boxes (editable or not)."""
+        return f"""
+            QComboBox {{
+                background-color: {Theme.SURFACE_ALT};
+                color: {Theme.TEXT};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 6px;
+                padding: 5px 10px;
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 13px;
+                min-height: 20px;
+            }}
+            QComboBox:focus {{
+                border: 1px solid {Theme.ACCENT_BORDER};
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {Theme.SURFACE};
+                color: {Theme.TEXT};
+                selection-background-color: {Theme.ACCENT_SOFT};
+                selection-color: {Theme.TEXT};
+                border: 1px solid {Theme.BORDER_STRONG};
+            }}
+        """
+
+    @staticmethod
+    def get_dialog_style() -> str:
+        """Base stylesheet for dialogs: background, group boxes and form labels."""
+        return f"""
+            QDialog {{
+                background-color: {Theme.BG};
+            }}
+            QGroupBox {{
+                color: {Theme.TEXT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 13px;
+                font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 8px;
+                margin-top: 14px;
+                padding: 12px 10px 8px 10px;
+                background-color: {Theme.SURFACE};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 4px;
+            }}
+            QLabel {{
+                color: {Theme.TEXT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 13px;
+            }}
+            QCheckBox {{
+                color: {Theme.TEXT};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 13px;
+            }}
+        """
+
+    @staticmethod
+    def get_status_text_style(state: str) -> str:
+        """Label style for an inline status message. ``state``: "ok", "warning", "error" or "muted"."""
+        color = {
+            "ok": Theme.SUCCESS,
+            "warning": Theme.WARNING,
+            "error": Theme.DANGER,
+        }.get(state, Theme.TEXT_MUTED)
+        return f"""
+            QLabel {{
+                color: {color};
+                font-family: {Theme.FONT_FAMILY}, {Theme.FONT_FALLBACK};
+                font-size: 12.5px;
             }}
         """
 

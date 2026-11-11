@@ -9,6 +9,8 @@ from pathlib import Path
 import fitz
 from PySide6.QtCore import QObject, QRunnable, Signal
 
+from immersion_app.core.signals import safe_emit
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,10 +38,6 @@ class PreviewGenerationTask(QRunnable):
         """Generate preview thumbnail (runs on background thread)."""
         try:
             preview_path = self._generate_preview()
-            self.signals.finished.emit(self.file_path, preview_path)
-        except RuntimeError:
-            # Qt object deleted during operation
-            return
         except Exception as exc:
             logger.error(
                 "Preview generation failed for %s: %s",
@@ -47,10 +45,9 @@ class PreviewGenerationTask(QRunnable):
                 exc,
                 exc_info=True
             )
-            try:
-                self.signals.failed.emit(self.file_path, str(exc))
-            except RuntimeError:
-                return
+            safe_emit(self.signals.failed, self.file_path, str(exc))
+            return
+        safe_emit(self.signals.finished, self.file_path, preview_path)
 
     def _generate_preview(self) -> str:
         """Generate preview and return path to cached file."""

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-from .anki import DECK_NAME
+from .anki import get_anki_settings
 from .paths import ANKI_SNAPSHOT_PATH
 
 
@@ -16,6 +16,10 @@ def load_snapshot() -> set[str]:
     try:
         logger.debug(f"Loading Anki snapshot from {ANKI_SNAPSHOT_PATH}")
         data = json.loads(ANKI_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+        snapshot_deck = data.get("deck")
+        if snapshot_deck and snapshot_deck != get_anki_settings().deck_name:
+            logger.info(f"Ignoring Anki snapshot for a different deck ({snapshot_deck!r})")
+            return set()
         words = set(data.get("words", []))
         updated_at = data.get("updated_at", "unknown")
         logger.info(f"Loaded Anki snapshot: {len(words)} words (updated: {updated_at})")
@@ -36,7 +40,7 @@ def save_snapshot(words: set[str]) -> None:
         json.dumps(
             {
                 "updated_at": timestamp,
-                "deck": DECK_NAME,
+                "deck": get_anki_settings().deck_name,
                 "words": sorted(words),
             },
             ensure_ascii=False,

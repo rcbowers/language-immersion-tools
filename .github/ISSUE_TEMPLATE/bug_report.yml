@@ -1,0 +1,42 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a PDF
+        2. Click a word
+        3. ...
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Where in the app?
+      options: [PDF reader, Video player, Anki / cards, Translation, Study-time tracking, Settings, CLI / auto_miner, Other]
+  - type: input
+    id: version
+    attributes:
+      label: LinguaLoop version or commit
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Python version
+      placeholder: Windows 11, Python 3.12
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt
+      description: Settings → Data folder → Open, then logs/. Paste the relevant part (remove anything private).
+      render: text
+  - type: markdown
+    attributes:
+      value: Please don't attach copyrighted books or videos. Describing the file (format, language) is enough.

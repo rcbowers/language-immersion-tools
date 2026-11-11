@@ -1,22 +1,14 @@
-yt-dlp
-ffmpeg-python
-googletrans==4.0.2
-# googletrans 4.x requires the modern httpx/httpcore transport API.  Do not pin
-# httpcore separately: pip resolves the compatible version through httpx.
-httpx>=0.27.2,<1.0
-requests>=2.31.0  # web page sources for auto_miner
-psutil>=5.9.0
+# LinguaLoop — core desktop app.
+# Optional features live in separate files:
+#   requirements-offline.txt  offline translation (MarianMT; large download)
+#   requirements-media.txt    subtitle generation (Whisper) and companion CLI tools
+#   requirements-dev.txt      tests and linting
 PySide6>=6.7.0
 PyMuPDF>=1.24.0
-
-# Offline translation support (sentence miner GUI)
-# MarianMT for high-quality offline translation
-transformers>=4.30.0
-torch>=2.0.0
-sentencepiece>=0.1.99
-sacremoses>=0.0.53
-
-openai-whisper # For subtitle generation
-pytest>=8.0.0
-matplotlib>=3.8.0
-pypdf>=4.0.0
+platformdirs>=4.0.0
+psutil>=5.9.0
+requests>=2.31.0
+googletrans==4.0.2
+# googletrans 4.x requires the modern httpx/httpcore transport API. Do not pin
+# httpcore separately: pip resolves the compatible version through httpx.
+httpx>=0.27.2,<1.0

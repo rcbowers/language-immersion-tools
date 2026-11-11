@@ -18,6 +18,29 @@ def test_parse_args_defaults_to_bundled_input_file():
     assert args.target_lang == "en"
 
 
+def test_default_input_file_lives_in_user_data_folder(monkeypatch):
+    monkeypatch.delenv(auto_miner.AUTOMINE_FILE_ENV_VAR, raising=False)
+    assert auto_miner.default_input_file() == auto_miner.DATA_ROOT / "automine_inputs.md"
+
+
+def test_default_input_file_env_override(monkeypatch, tmp_path):
+    target = tmp_path / "vault" / "queue.md"
+    monkeypatch.setenv(auto_miner.AUTOMINE_FILE_ENV_VAR, str(target))
+    assert auto_miner.parse_args([]).input_file == target
+
+
+def test_deck_override_configures_anki(monkeypatch):
+    from immersion_app.core import anki
+
+    previous = anki.get_anki_settings()
+    try:
+        settings = auto_miner.configure_anki_from_user_settings("My Deck")
+        assert settings.deck_name == "My Deck"
+        assert anki.get_anki_settings().deck_name == "My Deck"
+    finally:
+        anki.configure_anki(previous)
+
+
 def test_parse_args_accepts_explicit_input_file():
     args = auto_miner.parse_args(["words.txt"])
 

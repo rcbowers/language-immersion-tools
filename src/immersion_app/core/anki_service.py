@@ -7,15 +7,16 @@ from datetime import datetime
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
-from immersion_app.core.anki import add_anki_card, fetch_deck_words, test_anki_connection
+from immersion_app.core.anki import AnkiSetupStatus, add_anki_card, check_anki_setup, fetch_deck_words
 from immersion_app.core.paths import PROCESSED_LOG_PATH
+from immersion_app.core.signals import safe_emit
 from immersion_app.core.queue_store import append_processed_log, append_queue_entry, load_queue_entries, save_queue_entries
 
 logger = logging.getLogger(__name__)
 
 
 class AnkiStatusTaskSignals(QObject):
-    finished = Signal(int, bool, object)
+    finished = Signal(int, bool, object, object)  # (request_id, ready, words, AnkiSetupStatus)
     failed = Signal(int, str)
 
 
@@ -27,22 +28,20 @@ class AnkiStatusTask(QRunnable):
 
     def run(self):
         try:
-            connected = test_anki_connection()
-            words = fetch_deck_words() if connected else None
-            self.signals.finished.emit(self.request_id, connected, words)
-        except RuntimeError:
-            return
+            status = check_anki_setup()
+            words = fetch_deck_words() if status.ok else None
         except Exception as exc:
             logger.error("Anki status task failed (request_id=%s): %s", self.request_id, exc, exc_info=True)
-            try:
-                self.signals.failed.emit(self.request_id, str(exc))
-            except RuntimeError:
-                return
+            safe_emit(self.signals.failed, self.request_id, str(exc))
+            return
+        if not status.ok:
+            logger.warning("Anki not ready: %s", status.message)
+        safe_emit(self.signals.finished, self.request_id, status.ok, words, status)
 
 
 class AnkiAddTaskSignals(QObject):
     finished = Signal(object)
-    failed = Signal(str)
+    failed = Signal(object, str, bool)  # (payload, error message, is_connection_error)
 
 
 class AnkiAddTask(QRunnable):
@@ -54,16 +53,13 @@ class AnkiAddTask(QRunnable):
     def run(self):
         try:
             note_id = add_anki_card(self.payload["sentence"], self.payload["word"], self.payload["translation"])
-            result = dict(self.payload)
-            result["note_id"] = note_id
-            self.signals.finished.emit(result)
-        except RuntimeError:
-            return
         except Exception as exc:
-            try:
-                self.signals.failed.emit(str(exc))
-            except RuntimeError:
-                return
+            # AnkiConnect errors (e.g. duplicate note) are RuntimeErrors and must reach the UI.
+            safe_emit(self.signals.failed, dict(self.payload), str(exc), isinstance(exc, ConnectionError))
+            return
+        result = dict(self.payload)
+        result["note_id"] = note_id
+        safe_emit(self.signals.finished, result)
 
 
 class QueueProcessTaskSignals(QObject):
@@ -89,32 +85,33 @@ class QueueProcessTask(QRunnable):
                 try:
                     add_anki_card(sentence_for_note, entry["word"], entry["translation"])
                     successful_entries.append(entry)
-                except Exception:
+                except Exception as exc:
+                    logger.warning("Queued card failed for %r: %s", entry.get("word"), exc)
                     failed_entries.append(entry)
-            self.signals.finished.emit(successful_entries, failed_entries)
-        except RuntimeError:
-            return
         except Exception as exc:
-            try:
-                self.signals.failed.emit(str(exc))
-            except RuntimeError:
-                return
+            safe_emit(self.signals.failed, str(exc))
+            return
+        safe_emit(self.signals.finished, successful_entries, failed_entries)
 
 
 class AnkiService(QObject):
     status_check_started = Signal(int)
     connection_changed = Signal(bool)
+    setup_status_changed = Signal(object)  # AnkiSetupStatus: why Anki is (not) ready
     vocabulary_loaded = Signal(object)
     card_added = Signal(object)
     card_failed = Signal(str)
+    card_add_failed = Signal(object, str, bool)  # (payload, error message, is_connection_error)
     queue_entry_added = Signal(object)
     queue_processed = Signal(int, int, str)
+    queue_entries_processed = Signal(list, list)  # (successful_entries, failed_entries)
 
     def __init__(self, thread_pool: QThreadPool | None = None, parent: QObject | None = None):
         super().__init__(parent)
         self._thread_pool = thread_pool or QThreadPool.globalInstance()
         self._request_id = 0
         self._is_connected = False
+        self.setup_status: AnkiSetupStatus | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -145,12 +142,19 @@ class AnkiService(QObject):
             "status": "queued",
         }
 
-    def add_card_async(self, sentence: str, word: str, translation: str):
-        payload = {"sentence": sentence, "word": word, "translation": translation}
+    def add_card_async(self, sentence: str, word: str, translation: str, **extra):
+        """Add a card on a worker thread; emits ``card_added`` or ``card_add_failed``/``card_failed``."""
+        payload = {"sentence": sentence, "word": word, "translation": translation, **extra}
         task = AnkiAddTask(payload)
         task.signals.finished.connect(self.card_added.emit)
-        task.signals.failed.connect(self.card_failed.emit)
+        task.signals.failed.connect(self._on_add_failed)
         self._thread_pool.start(task)
+
+    def _on_add_failed(self, payload: dict, message: str, is_connection_error: bool):
+        if is_connection_error:
+            self._is_connected = False
+        self.card_add_failed.emit(payload, message, is_connection_error)
+        self.card_failed.emit(message)
 
     def add_card_now(self, sentence: str, word: str, translation: str):
         note_id = add_anki_card(sentence, word, translation)
@@ -186,12 +190,17 @@ class AnkiService(QObject):
         if successful_entries:
             append_processed_log(successful_entries)
         save_queue_entries(failed_entries)
+        self.queue_entries_processed.emit(successful_entries, failed_entries)
         self.queue_processed.emit(len(successful_entries), len(failed_entries), str(PROCESSED_LOG_PATH))
 
-    def _on_status_finished(self, request_id: int, connected: bool, words: object) -> None:
+    def _on_status_finished(self, request_id: int, connected: bool, words: object, status: object = None) -> None:
         if request_id != self._request_id:
             return
         self._is_connected = connected
+        self.setup_status = status if isinstance(status, AnkiSetupStatus) else AnkiSetupStatus(
+            connected=connected, deck_exists=connected, note_type_exists=connected, message="Ready" if connected else ""
+        )
+        self.setup_status_changed.emit(self.setup_status)
         self.connection_changed.emit(connected)
         if words is not None:
             self.vocabulary_loaded.emit(words)
@@ -201,6 +210,8 @@ class AnkiService(QObject):
             return
         logger.warning("Anki status refresh failed (request_id=%s): %s", request_id, error_message)
         self._is_connected = False
+        self.setup_status = AnkiSetupStatus(connected=False, message=error_message)
+        self.setup_status_changed.emit(self.setup_status)
         self.connection_changed.emit(False)
 
     def _on_queue_processed(self, successful_entries: list[dict], failed_entries: list[dict]):

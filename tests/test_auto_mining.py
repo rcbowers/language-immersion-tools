@@ -14,13 +14,13 @@ def test_normalize_folds_accents_and_apostrophes():
 
 
 def test_find_candidates_uses_source_wording_for_accent_flexible_phrase():
-    contexts = [SourceContext("Porque eres un brujo, Harry.", "book.pdf", "Page 5")]
+    contexts = [SourceContext("Porque eres un buen amigo, Pablo.", "book.pdf", "Page 5")]
 
-    candidates = find_candidates("eres un brujo, harry", contexts)
+    candidates = find_candidates("eres un buen amigo, pablo", contexts)
 
     assert len(candidates) == 1
-    assert candidates[0].matched_text == "eres un brujo, Harry"
-    assert candidates[0].sentence == "Porque eres un brujo, Harry."
+    assert candidates[0].matched_text == "eres un buen amigo, Pablo"
+    assert candidates[0].sentence == "Porque eres un buen amigo, Pablo."
     assert candidates[0].location == "Page 5"
 
 

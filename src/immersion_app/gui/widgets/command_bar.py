@@ -184,8 +184,12 @@ class CommandBar(QWidget):
         self.page_next_button.clicked.connect(self.next_page_requested.emit)
         self.page_next_button.setVisible(False)
 
+        self.page_total_label = QLabel("")
+        self.page_total_label.setVisible(False)
+
         layout.addWidget(self.page_prev_button)
         layout.addWidget(self.page_current_input)
+        layout.addWidget(self.page_total_label)
         layout.addWidget(self.page_next_button)
         layout.addSpacing(8)
 
@@ -199,10 +203,11 @@ class CommandBar(QWidget):
         self.analytics_button.clicked.connect(self.analytics_requested.emit)
         layout.addWidget(self.analytics_button)
 
-        # Settings button
-        self.settings_button = QPushButton("⚙")
-        self.settings_button.setFixedSize(28, 28)
-        self.settings_button.setStyleSheet(Theme.get_button_style("ghost"))
+        # Settings button (text label: the gear glyph rendered as a faint emoji on Windows)
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.setFixedHeight(28)
+        self.settings_button.setToolTip("Settings (Ctrl+,)")
+        self.settings_button.setStyleSheet(Theme.get_button_style("secondary"))
         self.settings_button.clicked.connect(self.settings_requested.emit)
         layout.addWidget(self.settings_button)
         self.refresh_theme()
@@ -233,7 +238,8 @@ class CommandBar(QWidget):
             }}
         """)
         self.page_next_button.setStyleSheet(Theme.get_button_style("ghost"))
-        self.settings_button.setStyleSheet(Theme.get_button_style("ghost"))
+        self.page_total_label.setStyleSheet(Theme.get_label_style("muted"))
+        self.settings_button.setStyleSheet(Theme.get_button_style("secondary"))
 
     def set_title(self, title: str, subtitle: str = ""):
         """Update the document title."""
@@ -247,16 +253,24 @@ class CommandBar(QWidget):
         """Show or hide the close button based on whether a file is loaded."""
         self.close_button.setVisible(loaded)
 
+    def set_welcome_mode(self, welcome: bool):
+        """On the welcome screen the page itself offers Open and Recent, so hide the duplicates."""
+        self.recent_button.setVisible(not welcome)
+        self.open_button.setVisible(not welcome)
+        self.title_widget.setVisible(not welcome)
+
     def set_page_info(self, current: int, total: int):
         """Show/update PDF page controls. Pass total=0 to hide."""
         visible = total > 0
         self.page_prev_button.setVisible(visible)
         self.page_current_input.setVisible(visible)
+        self.page_total_label.setVisible(visible)
         self.page_next_button.setVisible(visible)
         self._total_pages = total
         if visible:
             self.page_current_input.setValidator(QIntValidator(1, total, self))
             self.page_current_input.setText(str(current))
+            self.page_total_label.setText(f"/ {total}")
             self.page_prev_button.setEnabled(current > 1)
             self.page_next_button.setEnabled(current < total)
         else:

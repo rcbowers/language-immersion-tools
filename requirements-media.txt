@@ -1,0 +1,9 @@
+# Subtitle generation (Whisper) and the companion CLI tools (audio download,
+# frequency analysis, vocab counter). FFmpeg must also be installed and on PATH.
+-r requirements.txt
+openai-whisper
+ffmpeg-python
+yt-dlp
+matplotlib>=3.8.0
+pypdf>=4.0.0
+beautifulsoup4>=4.12.0

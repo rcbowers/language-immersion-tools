@@ -15,9 +15,10 @@ class AnkiAnalyticsManager(QObject):
 
     stats_changed = Signal(int, int)  # (today_count, total_vocabulary_count)
 
-    def __init__(self, user_data: dict, snapshot_words: set[str] | None = None):
+    def __init__(self, user_data: dict, snapshot_words: set[str] | None = None, today=date.today):
         super().__init__()
         self._user_data = user_data
+        self._today = today  # injectable clock (tests)
         analytics = self._ensure_analytics()
         self._persisted_vocabulary = {
             token.lower()
@@ -50,7 +51,7 @@ class AnkiAnalyticsManager(QObject):
         return len(self.vocabulary_seen)
 
     def today_count(self, target_date: date | None = None) -> int:
-        day_key = (target_date or date.today()).isoformat()
+        day_key = (target_date or self._today()).isoformat()
         return int(self._user_data["analytics"]["cards_added_by_day"].get(day_key) or 0)
 
     def set_snapshot_words(self, words: set[str] | list[str]) -> None:

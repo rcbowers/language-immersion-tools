@@ -3,9 +3,10 @@
 import logging
 
 from immersion_app.core.logging_config import setup_cli_logging
-from immersion_app.core.anki import add_anki_card, test_anki_connection
+from immersion_app.core.anki import AnkiSettings, add_anki_card, configure_anki, get_anki_settings, test_anki_connection
 from immersion_app.core.paths import PROCESSED_LOG_PATH, QUEUE_JSON_PATH
 from immersion_app.core.queue_store import append_processed_log, load_queue_entries, save_queue_entries
+from immersion_app.core.user_data import load_user_data
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +17,15 @@ def main():
     logger.info("Queued Card Processor - Starting")
     logger.info("=" * 60)
     logger.info(f"Queue file: {QUEUE_JSON_PATH}")
+    # Use the deck/note type chosen in the desktop app's Settings.
+    configure_anki(AnkiSettings.from_dict(load_user_data().get("anki")))
 
     if not test_anki_connection():
-        logger.error("AnkiConnect is not available")
+        settings = get_anki_settings()
+        logger.error(
+            f"AnkiConnect is not available, or deck '{settings.deck_name}' / note type "
+            f"'{settings.note_type}' is missing (choose them in LinguaLoop's Settings)"
+        )
         return 1
 
     entries = load_queue_entries()

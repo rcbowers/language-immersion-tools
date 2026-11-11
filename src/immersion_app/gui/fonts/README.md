@@ -1,10 +1,10 @@
 # Inter Font Files
 
-This directory should contain the Inter font family files for the application.
+This directory contains the Inter font family files bundled with the application.
 
 ## Required Files
 
-Download Inter from https://rsms.me/inter/ and place these files here:
+Bundled files (from https://rsms.me/inter/):
 
 - `Inter-Regular.ttf` (400 weight)
 - `Inter-Medium.ttf` (500 weight)
@@ -13,8 +13,8 @@ Download Inter from https://rsms.me/inter/ and place these files here:
 
 ## License
 
-Inter is licensed under the SIL Open Font License 1.1
-https://github.com/rsms/inter/blob/master/LICENSE.txt
+Inter is licensed under the SIL Open Font License 1.1. The full license text ships alongside the fonts in [`OFL.txt`](OFL.txt), as the OFL requires when redistributing.
+Upstream: https://github.com/rsms/inter/blob/master/LICENSE.txt
 
 ## Fallback
 

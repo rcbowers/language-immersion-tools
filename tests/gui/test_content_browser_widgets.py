@@ -78,6 +78,7 @@ class TestContentBrowserItem(unittest.TestCase):
         event = QMouseEvent(
             QMouseEvent.Type.MouseButtonPress,
             QPointF(10, 10),
+            QPointF(10, 10),
             Qt.MouseButton.LeftButton,
             Qt.MouseButton.LeftButton,
             Qt.KeyboardModifier.NoModifier
@@ -129,8 +130,10 @@ class TestContentBrowserGrid(unittest.TestCase):
 
     def test_empty_state(self):
         """Grid shows empty state when no content."""
-        # Grid should have one widget (empty label)
-        self.assertEqual(self.grid.grid_layout.count(), 1)
+        # Empty state is a centred label outside the flow layout
+        self.assertEqual(self.grid.grid_layout.count(), 0)
+        self.assertFalse(self.grid.empty_label.isHidden())
+        self.assertTrue(self.grid.scroll_area.isHidden())
 
     def test_content_added_creates_items(self):
         """Adding content creates grid items."""
@@ -174,7 +177,8 @@ class TestContentBrowserGrid(unittest.TestCase):
 
         # Grid should auto-refresh and show empty state
         # (via signal connection in _connect_signals)
-        self.assertEqual(self.grid.grid_layout.count(), 1)  # Empty label
+        self.assertEqual(self.grid.grid_layout.count(), 0)
+        self.assertFalse(self.grid.empty_label.isHidden())
 
     def test_refresh_theme(self):
         """Grid refreshes styling on theme change."""
