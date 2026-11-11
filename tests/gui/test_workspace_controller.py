@@ -20,6 +20,7 @@ def _make(user_data=None):
     pdf = SimpleNamespace(
         load_pdf=_Calls(),
         pdf_service=SimpleNamespace(close_document=_Calls()),
+        reset_render_state=_Calls(),
         current_pdf_path="x.pdf",
     )
     video = SimpleNamespace(
@@ -215,6 +216,7 @@ def test_close_current_video_resets_everything():
     assert len(window.media_player.stop) == 1
     assert len(window.usage_tracker.on_video_closed) == 1
     assert len(pdf.pdf_service.close_document) == 1
+    assert len(pdf.reset_render_state) == 1
     assert len(video.video_service.clear_subtitles) == 1
     assert pdf.current_pdf_path == "" and video.current_video_path == "" and video.current_subtitle is None
     assert (window.current_source_name, window.current_pdf_path, window.current_video_path, window.current_srt_path) == ("", "", "", "")

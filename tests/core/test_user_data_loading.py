@@ -15,7 +15,6 @@ def state(tmp_path, monkeypatch):
     legacy = tmp_path / "legacy_user.json"
     monkeypatch.setattr(user_data, "USER_STATE_PATH", primary)
     monkeypatch.setattr(user_data, "LEGACY_USER_STATE_PATH", legacy)
-    monkeypatch.setattr(user_data, "ensure_runtime_dirs", lambda: primary.parent.mkdir(parents=True, exist_ok=True))
     primary.parent.mkdir(parents=True)
     return type("S", (), {"primary": primary, "legacy": legacy})
 

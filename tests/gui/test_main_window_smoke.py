@@ -65,7 +65,7 @@ def test_window_constructs_shows_and_starts_in_welcome_mode(qtbot, window):
     _wait_for_startup(qtbot, window)
     assert window.isVisible()
     assert window.mode_manager.current_mode == WorkspaceMode.WELCOME
-    assert window.windowTitle() == "Language Immersion Tools Workspace"
+    assert window.windowTitle() == "Language Immersion Tools"
     assert window.anki_service.refresh_calls == 1  # status checked once at start, not per widget
 
 

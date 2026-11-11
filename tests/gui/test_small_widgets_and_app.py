@@ -147,4 +147,4 @@ def test_main_wires_logging_migration_and_window(monkeypatch):
     # Data is migrated before the window loads it; logging is up before the window starts.
     assert order.index("migrate") < order.index("dirs") < order.index("logging") < order.index("window")
     assert order[-2:] == ["show", "exec"]
-    assert ("name", "LinguaLoop") in order
+    assert ("name", "Language Immersion Tools") in order
