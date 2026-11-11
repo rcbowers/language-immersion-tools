@@ -10,8 +10,9 @@ import os
 from PySide6.QtCore import QRunnable, QThreadPool
 
 from .anki import AnkiSettings
+from .appearance_manager import AppearanceManager
 from .language_config import DEFAULT_LEARNING_LANGUAGE, DEFAULT_NATIVE_LANGUAGE, normalize_language_code
-from .paths import LEGACY_USER_STATE_PATH, USER_STATE_PATH, ensure_runtime_dirs
+from .paths import LEGACY_USER_STATE_PATH, USER_STATE_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,7 @@ def load_user_data():
         ),
         "translation_mode": str(preferences.get("translation_mode") or "online"),
         "video_playback_speed": float(preferences.get("video_playback_speed") or 1.0),
-        "theme_mode": "dark" if str(preferences.get("theme_mode") or "").strip().lower() == "dark" else "light",
+        "theme_mode": AppearanceManager.normalize_mode(preferences.get("theme_mode")).value,
         "prefetch_enabled": bool(preferences.get("prefetch_enabled", True)),
     }
     payload["anki"] = AnkiSettings.from_dict(payload.get("anki")).to_dict()
@@ -196,7 +197,7 @@ def load_user_data():
 
 def save_user_data(payload):
     import time as _time
-    ensure_runtime_dirs()
+    # No directory setup here: the save worker creates the state folder, keeping disk I/O off the UI thread.
     vocab_len = len(payload.get("analytics", {}).get("vocabulary_seen", []))
     sessions_len = len(payload.get("usage_time", {}).get("sessions", []))
     t0 = _time.perf_counter()

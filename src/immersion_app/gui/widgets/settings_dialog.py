@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from immersion_app.core.appearance_manager import available_themes
 from immersion_app.gui.theme import Theme
 
 
@@ -70,7 +71,7 @@ class SettingsDialog(QDialog):
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         intro = QLabel(
-            "LinguaLoop adds cards through the AnkiConnect add-on (code 2055492159). "
+            "Language Immersion Tools adds cards through the AnkiConnect add-on (code 2055492159). "
             "Keep Anki open while you mine."
         )
         intro.setWordWrap(True)
@@ -113,7 +114,7 @@ class SettingsDialog(QDialog):
 
         self.tags_edit = QLineEdit()
         self.tags_edit.setStyleSheet(Theme.get_input_style())
-        self.tags_edit.setPlaceholderText("space-separated, e.g. sentence-mining lingualoop")
+        self.tags_edit.setPlaceholderText("space-separated, e.g. sentence-mining language-immersion-tools")
         form.addRow("Tags", self.tags_edit)
 
         self.anki_status_label = QLabel("")
@@ -149,8 +150,8 @@ class SettingsDialog(QDialog):
         form.addRow("", self.prefetch_checkbox)
 
         self.theme_combo = self._combo()
-        self.theme_combo.addItem("Light", "light")
-        self.theme_combo.addItem("Dark", "dark")
+        for theme_id, theme_label in available_themes():
+            self.theme_combo.addItem(theme_label, theme_id)
         form.addRow("Appearance", self.theme_combo)
 
         data_row = QHBoxLayout()

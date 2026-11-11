@@ -138,6 +138,7 @@ class ContentBrowserGrid(QWidget):
         self.content_browser_manager = content_browser_manager
         self.preview_generator = preview_generator
         self._thread_pool = QThreadPool.globalInstance()
+        self._dirty = False
         self._setup_ui()
         self._connect_signals()
 
@@ -175,7 +176,7 @@ class ContentBrowserGrid(QWidget):
         """Connect to content browser manager signals."""
         self.content_browser_manager.content_added.connect(self._on_content_changed)
         self.content_browser_manager.content_removed.connect(self._on_content_changed)
-        self.content_browser_manager.content_updated.connect(self._on_content_changed)
+        self.content_browser_manager.content_updated.connect(self._on_content_updated)
 
         # Connect to preview generator signals
         self.preview_generator.preview_generated.connect(self._on_preview_generated)
@@ -183,7 +184,21 @@ class ContentBrowserGrid(QWidget):
 
     def _on_content_changed(self, *args):
         """Handle content library changes."""
+        self._dirty = False
         self.refresh()
+
+    def _on_content_updated(self, *args):
+        """Metadata/position updates fire on every page turn: only rebuild when the grid is on screen."""
+        if self.isVisible():
+            self._on_content_changed()
+        else:
+            self._dirty = True
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._dirty:
+            self._dirty = False
+            self.refresh()
 
     def refresh(self):
         """Refresh the grid of content items."""

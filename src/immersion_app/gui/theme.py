@@ -4,6 +4,8 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QWidget
 import re
 
+from immersion_app.core.appearance_manager import AppearanceManager
+
 
 class Theme:
     """Modern theme with cool neutrals and electric accent."""
@@ -24,6 +26,9 @@ class Theme:
             "ACCENT_DARK": "#2f3fd9",
             "ACCENT_SOFT": "rgba(91,108,255,0.10)",
             "ACCENT_BORDER": "rgba(91,108,255,0.25)",
+            "ACCENT_HOVER": "#4a5ce6",
+            "ACCENT_PRESSED": "#3d4ed9",
+            "ACCENT_TEXT": "#ffffff",
             "HL_SEEN": "rgba(91,108,255,0.10)",
             "HL_NEW": "rgba(91,108,255,0.0)",
             "HL_SELECTED": "rgba(91,108,255,0.35)",
@@ -46,9 +51,137 @@ class Theme:
             "ACCENT_DARK": "#b5c0ff",
             "ACCENT_SOFT": "rgba(124,140,255,0.18)",
             "ACCENT_BORDER": "rgba(124,140,255,0.35)",
+            "ACCENT_HOVER": "#4a5ce6",
+            "ACCENT_PRESSED": "#3d4ed9",
+            "ACCENT_TEXT": "#ffffff",
             "HL_SEEN": "rgba(124,140,255,0.18)",
             "HL_NEW": "rgba(124,140,255,0.03)",
             "HL_SELECTED": "rgba(124,140,255,0.38)",
+            "SUCCESS": "#4ade80",
+            "WARNING": "#fbbf24",
+            "DANGER": "#f87171",
+        },
+        "sepia": {
+            "BG": "#f4ecd8",
+            "SURFACE": "#fbf6e9",
+            "SURFACE_ALT": "#ece2c8",
+            "SURFACE_OVERLAY": "rgba(251, 246, 233, 0.95)",
+            "TOAST_BG": "rgba(251, 246, 233, 0.97)",
+            "BORDER": "rgba(59,50,38,0.12)",
+            "BORDER_STRONG": "rgba(59,50,38,0.2)",
+            "TEXT": "#3b3226",
+            "TEXT_SOFT": "#6b5d49",
+            "TEXT_MUTED": "#9a8b72",
+            "ACCENT": "#9a5b2e",
+            "ACCENT_DARK": "#6f3f1a",
+            "ACCENT_SOFT": "rgba(154,91,46,0.1)",
+            "ACCENT_BORDER": "rgba(154,91,46,0.25)",
+            "ACCENT_HOVER": "#874f27",
+            "ACCENT_PRESSED": "#754421",
+            "ACCENT_TEXT": "#ffffff",
+            "HL_SEEN": "rgba(154,91,46,0.1)",
+            "HL_NEW": "rgba(154,91,46,0.0)",
+            "HL_SELECTED": "rgba(154,91,46,0.35)",
+            "SUCCESS": "#3f7d3a",
+            "WARNING": "#a16207",
+            "DANGER": "#b91c1c",
+        },
+        "forest": {
+            "BG": "#f1f5ef",
+            "SURFACE": "#fbfdf9",
+            "SURFACE_ALT": "#e6ede2",
+            "SURFACE_OVERLAY": "rgba(251, 253, 249, 0.95)",
+            "TOAST_BG": "rgba(251, 253, 249, 0.97)",
+            "BORDER": "rgba(31,45,36,0.1)",
+            "BORDER_STRONG": "rgba(31,45,36,0.16)",
+            "TEXT": "#1f2d24",
+            "TEXT_SOFT": "#4a5d51",
+            "TEXT_MUTED": "#8a9c8f",
+            "ACCENT": "#2f7d5b",
+            "ACCENT_DARK": "#1d5a40",
+            "ACCENT_SOFT": "rgba(47,125,91,0.1)",
+            "ACCENT_BORDER": "rgba(47,125,91,0.25)",
+            "ACCENT_HOVER": "#29704f",
+            "ACCENT_PRESSED": "#236143",
+            "ACCENT_TEXT": "#ffffff",
+            "HL_SEEN": "rgba(47,125,91,0.1)",
+            "HL_NEW": "rgba(47,125,91,0.0)",
+            "HL_SELECTED": "rgba(47,125,91,0.35)",
+            "SUCCESS": "#0d9488",
+            "WARNING": "#b45309",
+            "DANGER": "#dc2626",
+        },
+        "nord": {
+            "BG": "#2e3440",
+            "SURFACE": "#3b4252",
+            "SURFACE_ALT": "#434c5e",
+            "SURFACE_OVERLAY": "rgba(59, 66, 82, 0.96)",
+            "TOAST_BG": "rgba(59, 66, 82, 0.98)",
+            "BORDER": "rgba(255,255,255,0.1)",
+            "BORDER_STRONG": "rgba(255,255,255,0.18)",
+            "TEXT": "#eceff4",
+            "TEXT_SOFT": "#d8dee9",
+            "TEXT_MUTED": "#9aa5ba",
+            "ACCENT": "#88c0d0",
+            "ACCENT_DARK": "#b0dbe6",
+            "ACCENT_SOFT": "rgba(136,192,208,0.18)",
+            "ACCENT_BORDER": "rgba(136,192,208,0.35)",
+            "ACCENT_HOVER": "#7ab3c3",
+            "ACCENT_PRESSED": "#6ba5b5",
+            "ACCENT_TEXT": "#2e3440",
+            "HL_SEEN": "rgba(136,192,208,0.18)",
+            "HL_NEW": "rgba(136,192,208,0.03)",
+            "HL_SELECTED": "rgba(136,192,208,0.38)",
+            "SUCCESS": "#a3be8c",
+            "WARNING": "#ebcb8b",
+            "DANGER": "#d9737d",
+        },
+        "solarized_dark": {
+            "BG": "#002b36",
+            "SURFACE": "#073642",
+            "SURFACE_ALT": "#0d4452",
+            "SURFACE_OVERLAY": "rgba(7, 54, 66, 0.96)",
+            "TOAST_BG": "rgba(7, 54, 66, 0.98)",
+            "BORDER": "rgba(255,255,255,0.1)",
+            "BORDER_STRONG": "rgba(255,255,255,0.18)",
+            "TEXT": "#93a1a1",
+            "TEXT_SOFT": "#839496",
+            "TEXT_MUTED": "#657b83",
+            "ACCENT": "#4aa3e3",
+            "ACCENT_DARK": "#8cc8f0",
+            "ACCENT_SOFT": "rgba(74,163,227,0.18)",
+            "ACCENT_BORDER": "rgba(74,163,227,0.35)",
+            "ACCENT_HOVER": "#3b94d4",
+            "ACCENT_PRESSED": "#2f85c4",
+            "ACCENT_TEXT": "#002b36",
+            "HL_SEEN": "rgba(74,163,227,0.18)",
+            "HL_NEW": "rgba(74,163,227,0.03)",
+            "HL_SELECTED": "rgba(74,163,227,0.38)",
+            "SUCCESS": "#9aae00",
+            "WARNING": "#d4a017",
+            "DANGER": "#f0544f",
+        },
+        "midnight": {
+            "BG": "#000000",
+            "SURFACE": "#0b0b0f",
+            "SURFACE_ALT": "#17171d",
+            "SURFACE_OVERLAY": "rgba(11, 11, 15, 0.96)",
+            "TOAST_BG": "rgba(11, 11, 15, 0.98)",
+            "BORDER": "rgba(255,255,255,0.1)",
+            "BORDER_STRONG": "rgba(255,255,255,0.18)",
+            "TEXT": "#e6e6ea",
+            "TEXT_SOFT": "#b4b4bd",
+            "TEXT_MUTED": "#7c7c88",
+            "ACCENT": "#ff7a59",
+            "ACCENT_DARK": "#ffb199",
+            "ACCENT_SOFT": "rgba(255,122,89,0.18)",
+            "ACCENT_BORDER": "rgba(255,122,89,0.35)",
+            "ACCENT_HOVER": "#f06a48",
+            "ACCENT_PRESSED": "#de5c3b",
+            "ACCENT_TEXT": "#1a0c08",
+            "HL_SEEN": "rgba(255,122,89,0.18)",
+            "HL_NEW": "rgba(255,122,89,0.03)",
+            "HL_SELECTED": "rgba(255,122,89,0.38)",
             "SUCCESS": "#4ade80",
             "WARNING": "#fbbf24",
             "DANGER": "#f87171",
@@ -76,6 +209,9 @@ class Theme:
     ACCENT_DARK = ""
     ACCENT_SOFT = ""
     ACCENT_BORDER = ""
+    ACCENT_HOVER = ""
+    ACCENT_PRESSED = ""
+    ACCENT_TEXT = ""
 
     # Word Highlight States
     HL_SEEN = ""
@@ -125,9 +261,10 @@ class Theme:
 
     @classmethod
     def apply_mode(cls, mode: str) -> None:
-        """Activate the requested palette."""
-        palette = cls._PALETTES["dark" if str(mode).lower() == "dark" else "light"]
-        cls._mode = "dark" if str(mode).lower() == "dark" else "light"
+        """Activate the requested palette (unknown ids fall back to light)."""
+        theme = AppearanceManager.normalize_mode(mode)
+        palette = cls._PALETTES[theme.value]
+        cls._mode = theme.value
         for token_name, token_value in palette.items():
             setattr(cls, token_name, token_value)
 
@@ -137,7 +274,7 @@ class Theme:
 
     @classmethod
     def is_dark(cls) -> bool:
-        return cls._mode == "dark"
+        return AppearanceManager.normalize_mode(cls._mode).is_dark
 
     @staticmethod
     def to_qcolor(color_string: str) -> QColor:
@@ -204,7 +341,7 @@ class Theme:
             return f"""
                 QPushButton {{
                     background-color: {Theme.ACCENT};
-                    color: white;
+                    color: {Theme.ACCENT_TEXT};
                     border: none;
                     border-radius: 6px;
                     padding: 8px 16px;
@@ -213,10 +350,10 @@ class Theme:
                     font-weight: {Theme.FONT_WEIGHT_MEDIUM};
                 }}
                 QPushButton:hover {{
-                    background-color: #4a5ce6;
+                    background-color: {Theme.ACCENT_HOVER};
                 }}
                 QPushButton:pressed {{
-                    background-color: #3d4ed9;
+                    background-color: {Theme.ACCENT_PRESSED};
                 }}
                 QPushButton:disabled {{
                     background-color: {Theme.SURFACE_ALT};
@@ -264,7 +401,7 @@ class Theme:
             return f"""
                 QPushButton {{
                     background-color: {Theme.ACCENT};
-                    color: white;
+                    color: {Theme.ACCENT_TEXT};
                     border: none;
                     border-radius: 6px;
                     padding: 0px;
@@ -273,10 +410,10 @@ class Theme:
                     font-weight: {Theme.FONT_WEIGHT_SEMIBOLD};
                 }}
                 QPushButton:hover {{
-                    background-color: #4a5ce6;
+                    background-color: {Theme.ACCENT_HOVER};
                 }}
                 QPushButton:pressed {{
-                    background-color: #3d4ed9;
+                    background-color: {Theme.ACCENT_PRESSED};
                 }}
                 QPushButton:disabled {{
                     background-color: {Theme.SURFACE_ALT};

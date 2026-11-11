@@ -47,6 +47,36 @@ class ThemeTests(unittest.TestCase):
         finally:
             Theme.apply_mode("light")
 
+    def test_every_theme_has_a_palette_with_identical_tokens(self):
+        from immersion_app.core.appearance_manager import AppearanceMode
+
+        self.assertEqual(set(Theme._PALETTES), {mode.value for mode in AppearanceMode})
+        reference = set(Theme._PALETTES["light"])
+        for theme_id, palette in Theme._PALETTES.items():
+            self.assertEqual(set(palette), reference, theme_id)
+            self.assertTrue(all(palette.values()), theme_id)
+
+    def test_is_dark_follows_theme_registry(self):
+        expected = {
+            "light": False, "sepia": False, "forest": False,
+            "dark": True, "nord": True, "solarized_dark": True, "midnight": True,
+        }
+        try:
+            for theme_id, dark in expected.items():
+                Theme.apply_mode(theme_id)
+                self.assertEqual(Theme.current_mode(), theme_id)
+                self.assertEqual(Theme.is_dark(), dark, theme_id)
+        finally:
+            Theme.apply_mode("light")
+
+    def test_unknown_theme_falls_back_to_light(self):
+        try:
+            Theme.apply_mode("neon-pink")
+            self.assertEqual(Theme.current_mode(), "light")
+            self.assertFalse(Theme.is_dark())
+        finally:
+            Theme.apply_mode("light")
+
 
 if __name__ == "__main__":
     unittest.main()

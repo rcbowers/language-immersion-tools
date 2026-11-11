@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import fitz
 import pytest
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor
 
 from immersion_app.core.appearance_manager import AppearanceMode
 from immersion_app.core.pdf_service import PDFService
@@ -65,7 +67,12 @@ def _make_window(dark=False):
         command_bar=_Recorder(),
         pdf_status_bar=_Recorder(),
         usage_tracker=_Recorder(),
-        pdf_label=SimpleNamespace(setPixmap=lambda pixmap: labels.__setitem__("pixmap", pixmap), resize=lambda size: None),
+        pdf_label=SimpleNamespace(
+            setPixmap=lambda pixmap: labels.__setitem__("pixmap", pixmap),
+            resize=lambda size: None,
+            set_word_highlights=lambda items: labels.__setitem__("words", list(items)),
+            set_selection_rects=lambda rects, color=None: labels.setdefault("selections", []).append(list(rects)),
+        ),
         scroll_resets=0,
         persists=0,
         _labels=labels,
@@ -92,6 +99,18 @@ def controller_factory(qapp):
         return controller, window
 
     return _make
+
+
+def _settle(qapp, controller, timeout_s=10.0):
+    """Pump the event loop until the controller has applied the pending render."""
+    import time
+
+    deadline = time.perf_counter() + timeout_s
+    while controller.render_pending and time.perf_counter() < deadline:
+        qapp.processEvents()
+        time.sleep(0.001)
+    qapp.processEvents()
+    assert not controller.render_pending, "render never settled"
 
 
 def _load(controller, path, page=0):
@@ -148,24 +167,139 @@ def test_jump_to_page_validates_range(controller_factory, sample_pdf):
     assert controller.current_page_index == 4
 
 
-def test_render_extracts_words_and_prefetches(controller_factory, sample_pdf):
+def test_render_extracts_words_and_prefetches(controller_factory, sample_pdf, qapp):
     controller, window = controller_factory()
     _load(controller, sample_pdf)
 
     controller.render_current_page()
+    _settle(qapp, controller)
 
     assert window._labels["pixmap"] is not None
     assert any(word[4].startswith("hola") for word in controller.page_word_order)
     assert "hola" in controller.mining_controller.prefetched[-1]
 
 
-def test_render_inverts_page_in_dark_mode(controller_factory, sample_pdf):
+def test_render_inverts_page_in_dark_mode(controller_factory, sample_pdf, qapp):
     light, _ = controller_factory(dark=False)
     dark, dark_window = controller_factory(dark=True)
     for controller in (light, dark):
         _load(controller, sample_pdf)
         controller.render_current_page()
+        _settle(qapp, controller)
     light_pixel = light.window._labels["pixmap"].toImage().pixelColor(5, 5)
     dark_pixel = dark_window._labels["pixmap"].toImage().pixelColor(5, 5)
     assert light_pixel.lightness() > 200  # white paper
     assert dark_pixel.lightness() < 60  # inverted
+
+
+# --- async rendering, cache and overlay ---------------------------------------------------------
+
+
+def _first_word_point(controller):
+    word = controller.page_word_order[0]
+    return QPoint(int((word[0] + word[2]) / 2 * controller.zoom_factor), int((word[1] + word[3]) / 2 * controller.zoom_factor))
+
+
+def test_render_is_asynchronous_and_keeps_previous_page_until_ready(controller_factory, sample_pdf, qapp):
+    controller, window = controller_factory()
+    _load(controller, sample_pdf)
+
+    controller.render_current_page()
+
+    assert controller.render_pending
+    assert "pixmap" not in window._labels  # nothing painted synchronously
+    _settle(qapp, controller)
+    assert window._labels["pixmap"] is not None
+
+
+def test_cached_page_applies_synchronously(controller_factory, sample_pdf, qapp):
+    controller, window = controller_factory()
+    _load(controller, sample_pdf)
+    controller.render_current_page()
+    _settle(qapp, controller)
+    window._labels.pop("pixmap")
+
+    controller.render_current_page()  # same page/zoom/theme -> cache hit
+
+    assert not controller.render_pending
+    assert "pixmap" in window._labels
+
+
+def test_neighbour_pages_are_prefetched_after_current_page_is_applied(controller_factory, sample_pdf, qapp):
+    controller, _window = controller_factory()
+    _load(controller, sample_pdf, page=2)
+    controller.render_current_page()
+    _settle(qapp, controller)
+    assert controller.pdf_service.wait_for_renders(10000)
+    qapp.processEvents()
+
+    for neighbour in (1, 3):
+        assert controller._cache_key(neighbour) in controller._cache
+    assert controller._cache_key(0) not in controller._cache
+
+    controller.next_page()  # prefetched -> instant
+    assert not controller.render_pending
+    assert controller.current_page_index == 3
+
+
+def test_stale_render_result_is_not_applied(controller_factory, sample_pdf, qapp):
+    controller, window = controller_factory()
+    _load(controller, sample_pdf, page=0)
+    controller.render_current_page()  # request for page 0 ...
+    controller.current_page_index = 3
+    controller.render_current_page()  # ... superseded by a request for page 3
+    _settle(qapp, controller)
+    assert controller.pdf_service.wait_for_renders(10000)
+    qapp.processEvents()
+
+    assert controller.page_word_order and "Página" in " ".join(w[4] for w in controller.page_word_order)
+    assert "4:" in " ".join(w[4] for w in controller.page_word_order)  # page 4 (index 3), not page 1
+
+
+def test_reset_render_state_drops_cache_and_late_results(controller_factory, sample_pdf, qapp):
+    controller, window = controller_factory()
+    _load(controller, sample_pdf)
+    controller.render_current_page()
+    controller.reset_render_state()  # e.g. document closed while a render was in flight
+    assert controller.pdf_service.wait_for_renders(10000)
+    qapp.processEvents()
+
+    assert not controller.render_pending
+    assert len(controller._cache) == 0
+    assert "pixmap" not in window._labels
+
+
+def test_click_moves_overlay_without_rerendering(controller_factory, sample_pdf, qapp):
+    controller, window = controller_factory()
+    _load(controller, sample_pdf)
+    controller.render_current_page()
+    _settle(qapp, controller)
+    pixmap_before = window._labels["pixmap"]
+    renders = []
+    original = controller.pdf_service.render_async
+    controller.pdf_service.render_async = lambda *a, **k: (renders.append(a), original(*a, **k))[1]
+
+    controller.click_at(_first_word_point(controller), Qt.KeyboardModifier.NoModifier)
+
+    assert not controller.render_pending
+    assert renders == []
+    assert window._labels["pixmap"] is pixmap_before
+    assert window._labels["selections"][-1], "selection rect should be set on the overlay"
+
+
+def test_word_highlights_cover_words_with_seen_and_new_colours(controller_factory, sample_pdf, qapp):
+    controller, window = controller_factory()
+    window.analytics_vocabulary = {"hola"}
+    _load(controller, sample_pdf)
+    controller.render_current_page()
+    _settle(qapp, controller)
+
+    items = window._labels["words"]
+    assert len(items) == len([w for w in controller.page_words if window._clean_word(w[4])])
+
+    window.analytics_vocabulary = set()
+    controller.refresh_word_highlights()  # vocabulary changed: no re-raster needed
+    argb = QColor.NameFormat.HexArgb
+    seen_colours = {color.name(argb) for _rect, color in items}
+    new_colours = {color.name(argb) for _rect, color in window._labels["words"]}
+    assert len(seen_colours) == 2 and len(new_colours) == 1

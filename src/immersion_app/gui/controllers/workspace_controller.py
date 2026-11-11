@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from immersion_app.core.mode import WorkspaceMode
+from immersion_app.core.perf import perf_timed
 from immersion_app.core.queue_store import load_queue_entries
 from immersion_app.core.recent_files import get_recent_files, remove_recent_file
 from immersion_app.core.user_data import save_user_data
@@ -36,6 +37,7 @@ class WorkspaceController:
         ):
             self.window.usage_tracker.on_video_closed()
         self.pdf_controller.pdf_service.close_document()
+        self.pdf_controller.reset_render_state()
         self.video_controller.video_service.clear_subtitles()
         self.pdf_controller.current_pdf_path = ""
         self.video_controller.current_video_path = ""
@@ -79,6 +81,7 @@ class WorkspaceController:
         else:
             self.video_controller.load_video(str(path), restore_position_ms=file_entry.get("video_position_ms", 0) if file_entry else 0)
 
+    @perf_timed("workspace_controller.restore_last_session")
     def restore_last_session(self):
         session = self.window.user_data["last_session"]
         content_type = str(session.get("content_type") or "")

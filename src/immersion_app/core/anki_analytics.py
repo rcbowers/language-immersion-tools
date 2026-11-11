@@ -1,4 +1,4 @@
-"""State manager for LinguaLoop-managed Anki analytics."""
+"""State manager for Language Immersion Tools-managed Anki analytics."""
 
 from __future__ import annotations
 

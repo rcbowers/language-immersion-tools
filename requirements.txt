@@ -1,4 +1,4 @@
-# LinguaLoop — core desktop app.
+# Language Immersion Tools — core desktop app.
 # Optional features live in separate files:
 #   requirements-offline.txt  offline translation (MarianMT; large download)
 #   requirements-media.txt    subtitle generation (Whisper) and companion CLI tools

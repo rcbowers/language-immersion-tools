@@ -19,5 +19,5 @@ for path in (str(SRC), str(ROOT), str(ROOT / "scripts")):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-os.environ.setdefault("LINGUALOOP_DATA_DIR", tempfile.mkdtemp(prefix="lingualoop-tests-"))
+os.environ.setdefault("IMMERSION_DATA_DIR", tempfile.mkdtemp(prefix="immersion-tests-"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

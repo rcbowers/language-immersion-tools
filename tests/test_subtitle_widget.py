@@ -3,6 +3,7 @@
 
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -158,7 +159,7 @@ class AnkiStatsUpdateTests(unittest.TestCase):
         window.analytics_vocabulary = set()
         window.command_bar = _CommandBar()
         window.subtitle_label = _SubtitleLabel()
-        window.doc = None
+        window.pdf_service = SimpleNamespace(doc=None)
         window.current_pdf_path = ""
         window._render_current_page = lambda: None
         window._refresh_word_highlights = UnifiedSentenceMinerWindow._refresh_word_highlights.__get__(

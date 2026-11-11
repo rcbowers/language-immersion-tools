@@ -1,6 +1,6 @@
 # Quick-Start Agent Guide
 
-This codebase is for LinguaLoop, a custom-written app for active immersion in foreign language content and mining unknown words into Anki cards.
+This codebase is for Language Immersion Tools, a custom-written app for active immersion in foreign language content and mining unknown words into Anki cards.
 
 ## ⚠ Binding Contract
 

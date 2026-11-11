@@ -1,6 +1,6 @@
 # Study-time tracking
 
-How LinguaLoop decides what counts as study time. The user-facing summary is in the README. This page is for contributors.
+How Language Immersion Tools decides what counts as study time. The user-facing summary is in the README. This page is for contributors.
 
 ## Pieces
 
@@ -17,13 +17,13 @@ How LinguaLoop decides what counts as study time. The user-facing summary is in 
 - **File context**: starts when a PDF or video is loaded (`on_document_loaded` / `on_video_loaded`) and ends when it's closed, another file is opened, or the app exits (`finalize_current_session`).
 - **Segment**: a run of activity inside a file context. Each activity timestamp contributes a ±60 s window, and overlapping windows are merged. A segment closes after **120 s without activity** (`IDLE_TIMEOUT_SECONDS`) or when the file context ends. The next activity on the same file starts a new segment, so tracking always resumes after a break.
 - **Session record**: each closed segment is appended to `user_data["usage_time"]["sessions"]` with `duration_seconds` (merged active time), start/end location, and pages or minutes advanced. A segment that crosses local midnight is split into one record per day, so "today" totals are correct.
-- **Focus**: activity only counts while LinguaLoop is the active application (`QGuiApplication.applicationStateChanged`). Any LinguaLoop window counts, including dialogs and the translation popover. Losing focus marks the indicator idle immediately.
+- **Focus**: activity only counts while Language Immersion Tools is the active application (`QGuiApplication.applicationStateChanged`). Any Language Immersion Tools window counts, including dialogs and the translation popover. Losing focus marks the indicator idle immediately.
 - **Indicator refresh**: on every activity and focus change, plus a 5 s timer for the idle transition.
 
 ## What counts as activity
 
 Counts:
-- mouse clicks, mouse movement, scrolling and key presses in any LinguaLoop window
+- mouse clicks, mouse movement, scrolling and key presses in any Language Immersion Tools window
 - translations the user asked for (`translation_ready` with `visible=True`)
 - page turns and jumps (PDF)
 - video playback (once per minute while playing)

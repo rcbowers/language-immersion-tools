@@ -14,6 +14,7 @@ from immersion_app.core.anki import (
     get_anki_settings,
     load_anki_options,
 )
+from immersion_app.core.appearance_manager import available_themes
 from immersion_app.core.language_config import get_language_label, list_language_codes
 from immersion_app.core.paths import DATA_ROOT
 from immersion_app.core.signals import safe_emit
@@ -145,7 +146,7 @@ class SettingsController(QObject):
             self.window._toggle_translation_mode()
         if bool(values.get("prefetch_enabled", True)) != bool(prefs.get("prefetch_enabled", True)):
             self.window._on_prefetch_toggled(bool(values.get("prefetch_enabled", True)))
-        if values.get("theme_mode") in ("light", "dark"):
+        if values.get("theme_mode") in {theme_id for theme_id, _ in available_themes()}:
             self.window._set_appearance_mode(values["theme_mode"])
 
         save_user_data(self.user_data)

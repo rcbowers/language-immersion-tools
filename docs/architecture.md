@@ -16,7 +16,7 @@ The repo is organized around one desktop app: `immersion_app`.
 
 Repo-tracked source code stays under `src/`. Nothing is written inside the source tree or install folder at runtime.
 
-Generated state (user data, card queue, logs, Anki vocabulary snapshot, previews) lives in the per-user data folder from `immersion_app.core.paths.DATA_ROOT`: `%APPDATA%\LinguaLoop` on Windows, `~/Library/Application Support/LinguaLoop` on macOS, `~/.local/share/LinguaLoop` on Linux. The `LINGUALOOP_DATA_DIR` environment variable overrides it (the test suite uses this).
+Generated state (user data, card queue, logs, Anki vocabulary snapshot, previews) lives in the per-user data folder from `immersion_app.core.paths.DATA_ROOT`: `%APPDATA%\Language Immersion Tools` on Windows, `~/Library/Application Support/LanguageImmersionTools` on macOS, `~/.local/share/LanguageImmersionTools` on Linux. The `IMMERSION_DATA_DIR` environment variable overrides it (the test suite uses this).
 
 A pre-1.0 `<repo>/data` folder is copied into the new location once (`paths.migrate_legacy_data`, called from `app.main`) and left in place. Legacy root files (`words_to_process.txt`, `sentence_miner_user_data.json`) are still read as fallback import sources.
 

@@ -1,29 +1,33 @@
 # Changelog
 
-All notable changes to LinguaLoop. Versions follow [semantic versioning](https://semver.org/).
+All notable changes to Language Immersion Tools. Versions follow [semantic versioning](https://semver.org/).
 
 ## [Unreleased] - 0.9.0, first public release
 
 ### Added
+- **Five new color themes** in *Settings → Appearance*: Sepia, Forest, Nord, Solarized Dark and Midnight (OLED), alongside Light and Dark. Dark themes also invert PDF pages.
 - **Settings dialog** (Settings button or Ctrl+,): Anki deck, note type, sentence/translation fields, tags and AnkiConnect URL, loaded live from Anki, with a *Create deck* button. Also learning/native language, online/offline translation, background pre-translation, appearance and the data folder.
 - **Getting started checklist** on the welcome screen: shows whether Anki is reachable and set up correctly (with *Start Anki*), your languages, and how to open your first source.
 - Page counter shows the total (`12 / 146`).
-- `auto_miner.py --deck` and the `LINGUALOOP_AUTOMINE_FILE` environment variable. Both CLIs now use the Anki settings chosen in the app.
+- `auto_miner.py --deck` and the `IMMERSION_AUTOMINE_FILE` environment variable. Both CLIs now use the Anki settings chosen in the app.
 - GPL-3.0 license, contributor guide, GitHub issue/PR templates and a CI workflow.
 
 ### Changed
-- **Your data moved** out of the source folder into a per-user folder (`%APPDATA%\LinguaLoop` on Windows). Existing `data/` contents are copied over automatically on first start. Override with `LINGUALOOP_DATA_DIR`.
-- The Anki deck is no longer hard-coded. New installs default to a `LinguaLoop` deck with the `Basic` note type. **If you upgraded, open Settings once and pick your existing deck.**
+- **Renamed from LinguaLoop to Language Immersion Tools.** Your data folder is copied from `%APPDATA%\LinguaLoop` to `%APPDATA%\LanguageImmersionTools` on first start (the old folder is left in place). The `LINGUALOOP_DATA_DIR`, `LINGUALOOP_AUTOMINE_FILE` and `LINGUALOOP_PERF` environment variables still work, but are now `IMMERSION_DATA_DIR`, `IMMERSION_AUTOMINE_FILE` and `IMMERSION_PERF`. New installs default to the `Language Immersion Tools` Anki deck and tag; existing settings are unchanged. The launcher is now `run_immersion.bat`.
+- **Your data moved** out of the source folder into a per-user folder (`%APPDATA%\LanguageImmersionTools` on Windows). Existing `data/` contents are copied over automatically on first start. Override with `IMMERSION_DATA_DIR`.
+- The Anki deck is no longer hard-coded. New installs default to a `Language Immersion Tools` deck with the `Basic` note type. **If you upgraded, open Settings once and pick your existing deck.**
 - Adding a card and processing the queue now run in the background, so a slow or busy Anki no longer freezes the window.
 - Checking whether online/offline translation is available no longer blocks the window at startup or when toggling.
 - Welcome screen: primary *Open PDF or video…* button near the top, no duplicate Open/Recent buttons, a centred library empty state, and the page scrolls instead of squashing on small windows.
 - The settings gear is now a labelled *Settings* button. The title in the top bar no longer sits in a white box.
 - Requirements are split: `requirements.txt` (core), `-offline`, `-media` and `-dev`.
+- **PDF reading is much more responsive.** Clicking or Ctrl+hovering a word only moves a highlight overlay instead of re-rendering the whole page (about 10x faster). Pages now render in the background, recently viewed and neighbouring pages are cached, and page turns no longer rewrite your data folder's directory structure or rebuild the (hidden) library grid.
 
 ### Fixed
+- Switching theme or finishing the Anki vocabulary sync did not refresh word highlights on an open PDF.
 - **Study-time tracker**: time stopped being counted for good after the first 2-minute break. It now resumes on your next action.
 - **Study-time tracker**: background work (page pre-translation, selection resets) made the indicator show *active* when you weren't doing anything. Only real input (mouse, scrolling, keys), visible translations and video playback count now.
-- Study time no longer pauses while you're in one of LinguaLoop's own dialogs, the indicator updates within seconds, time after midnight counts toward the new day, and reopening a book at a saved page no longer counts as pages read.
+- Study time no longer pauses while you're in one of the app's own dialogs, the indicator updates within seconds, time after midnight counts toward the new day, and reopening a book at a saved page no longer counts as pages read.
 - Anki errors such as *duplicate note* and translation backend errors were silently swallowed, leaving the UI stuck. They're now shown.
 - AnkiConnect requests now time out instead of hanging forever.
 - Background saves could finish out of order (older data overwriting newer), and the last save could be lost on exit. Saves are now ordered and flushed when the app closes.

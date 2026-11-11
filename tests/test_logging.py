@@ -42,7 +42,7 @@ root_logger.addHandler(console_handler)
 logger = logging.getLogger(__name__)
 
 print("=" * 60)
-print("Testing LinguaLoop Logging System")
+print("Testing Language Immersion Tools Logging System")
 print("=" * 60)
 print(f"Log file: {log_file_path}")
 print("=" * 60)

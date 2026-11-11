@@ -1,5 +1,13 @@
 # Language Immersion Tools
 
+[![Tests](https://github.com/ryanbowers166/language-immersion-tools/actions/workflows/tests.yml/badge.svg)](https://github.com/ryanbowers166/language-immersion-tools/actions/workflows/tests.yml)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/ryanbowers166/language-immersion-tools?style=flat&logo=github)](https://github.com/ryanbowers166/language-immersion-tools/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/ryanbowers166/language-immersion-tools)](https://github.com/ryanbowers166/language-immersion-tools/issues)
+[![Last commit](https://img.shields.io/github/last-commit/ryanbowers166/language-immersion-tools)](https://github.com/ryanbowers166/language-immersion-tools/commits/master)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+
 Language Immersion Tools (LIT) is a free desktop app for immersion-based language learning according to methods like Refold.la (not affiliated). Open a PDF or subtitled video, click words to translate them directly in the reader, and automatically generate an Anki card with the target word + sentence context + translation.
 
 I initially built this for my own personal use. I found that I was wasting a lot of time while doing active immersion in ebooks or TV shows. When I found a word, I would have to stop, copy the word into Google Translate, then manually create an Anki card. I built this to consolidate and partially automate that workflow so I could spend more time actually immersing. LIT grew organically over time as I tweaked and added new features that I wanted, and I personally use it for immersion most days. 
@@ -53,7 +61,7 @@ pip install -r requirements-offline.txt   # offline translation (MarianMT + PyTo
 
 ```bash
 # Windows
-run_lingualoop.bat
+run_immersion.bat
 # any platform
 python -m immersion_app.app
 ```
@@ -64,7 +72,7 @@ The welcome screen has a **Getting started** checklist that walks you through se
 
 ![Welcome screen](docs/screenshots/welcome.png)
 
-1. **Connect Anki.** Open Anki first, then go to **Settings** (Ctrl+,) → *Load from Anki*. Pick the deck you want cards to go to, the note type, and which fields should hold the sentence and the translation. By default it uses a deck called `LinguaLoop` with the built-in `Basic` note type (`Front` / `Back`). If the deck doesn't exist yet, *Create deck* will make it.
+1. **Connect Anki.** Open Anki first, then go to **Settings** (Ctrl+,) → *Load from Anki*. Pick the deck you want cards to go to, the note type, and which fields should hold the sentence and the translation. By default it uses a deck called `Language Immersion Tools` with the built-in `Basic` note type (`Front` / `Back`). If the deck doesn't exist yet, *Create deck* will make it.
 2. **Select native and target languages.** 
 
 ![Settings](docs/screenshots/settings.png)
@@ -91,7 +99,7 @@ The welcome screen has a **Getting started** checklist that walks you through se
 
 If Anki isn't running when you add a card, it goes into a queue so you don't lose it. Once Anki is open, go to **View Queue → Process Queue** to send everything.
 
-The dot in the status bar fills in (●) when study time is being counted. It counts while LinguaLoop is the active window and you've touched the mouse or keyboard in the last 2 minutes, or while a video is playing. Otherwise it pauses.
+The dot in the status bar fills in (●) when study time is being counted. It counts while Language Immersion Tools is the active window and you've touched the mouse or keyboard in the last 2 minutes, or while a video is playing. Otherwise it pauses.
 
 ![Dark mode](docs/screenshots/reader_dark.png)
 
@@ -105,11 +113,11 @@ You can switch in Settings or by clicking the *Translation* badge in the status 
 
 Settings, the card queue, study history and logs are all stored in a per-user folder:
 
-- Windows: `%APPDATA%\LinguaLoop`
-- macOS: `~/Library/Application Support/LinguaLoop`
-- Linux: `~/.local/share/LinguaLoop`
+- Windows: `%APPDATA%\Language Immersion Tools`
+- macOS: `~/Library/Application Support/LanguageImmersionTools`
+- Linux: `~/.local/share/LanguageImmersionTools`
 
-*Settings → Data folder → Open* will open it for you. If you want it somewhere else (like a synced folder or a thumb drive), set the `LINGUALOOP_DATA_DIR` environment variable.
+*Settings → Data folder → Open* will open it for you. If you want it somewhere else (like a synced folder or a thumb drive), set the `IMMERSION_DATA_DIR` environment variable.
 
 ## Companion tools
 
@@ -126,16 +134,16 @@ python -m immersion_app.cli.analyze books --types srt pdf            # word-freq
 ```bash
 python auto_miner.py [INPUT_FILE] [--deck "My Deck"] [--source-lang es] [--target-lang en]
 ```
-By default it reads `automine_inputs.md` from the data folder. You can point it at a different file with `LINGUALOOP_AUTOMINE_FILE`.
+By default it reads `automine_inputs.md` from the data folder. You can point it at a different file with `IMMERSION_AUTOMINE_FILE`.
 
 ## Troubleshooting
 - **Anki says "Not connected."** Make sure Anki is open and AnkiConnect is installed, then click the badge to check again. 
 - **Translations fail or say "rate limited" (HTTP 429).** This app uses the unofficial Google Translate API, which can sometimes be throttled/rate-limited. Turn off pre-translation in Settings and wait a while, or switch to offline translation.
-- **A video won't play.** LinguaLoop uses Qt's FFmpeg backend, and some AV1 and HEVC files won't play with it. Convert them to H.264 first (`scripts/convert_to_h264.ps1` does this on Windows).
+- **A video won't play.** Language Immersion Tools uses Qt's FFmpeg backend, and some AV1 and HEVC files won't play with it. Convert them to H.264 first (`scripts/convert_to_h264.ps1` does this on Windows).
 
 ## License
-LinguaLoop is free software under the [GNU General Public License v3.0](LICENSE).
+Language Immersion Tools is free software under the [GNU General Public License v3.0](LICENSE).
 
-It's built on [PySide6/Qt](https://www.qt.io/qt-for-python) (LGPL-3.0), [PyMuPDF](https://pymupdf.readthedocs.io/) (AGPL-3.0) and [googletrans](https://pypi.org/project/googletrans/) (MIT), plus [Transformers](https://github.com/huggingface/transformers)/[PyTorch](https://pytorch.org/) and [Whisper](https://github.com/openai/whisper) if you install the extras. It bundles the [Inter](https://rsms.me/inter/) typeface (SIL Open Font License 1.1, see `src/immersion_app/gui/fonts/OFL.txt`). LinguaLoop isn't affiliated with Anki or AnkiConnect.
+It's built on [PySide6/Qt](https://www.qt.io/qt-for-python) (LGPL-3.0), [PyMuPDF](https://pymupdf.readthedocs.io/) (AGPL-3.0) and [googletrans](https://pypi.org/project/googletrans/) (MIT), plus [Transformers](https://github.com/huggingface/transformers)/[PyTorch](https://pytorch.org/) and [Whisper](https://github.com/openai/whisper) if you install the extras. It bundles the [Inter](https://rsms.me/inter/) typeface (SIL Open Font License 1.1, see `src/immersion_app/gui/fonts/OFL.txt`). Language Immersion Tools isn't affiliated with Anki or AnkiConnect.
 
 Please only use it with books and videos you have the right to use.

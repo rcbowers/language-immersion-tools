@@ -19,8 +19,40 @@ def test_data_root_honours_env_override(monkeypatch, tmp_path):
     assert paths.resolve_data_root() == tmp_path / "custom"
 
 
+def test_data_root_falls_back_to_legacy_env_var(monkeypatch, tmp_path):
+    monkeypatch.delenv(paths.DATA_DIR_ENV_VAR, raising=False)
+    monkeypatch.setenv(paths.LEGACY_DATA_DIR_ENV_VAR, str(tmp_path / "old"))
+    assert paths.resolve_data_root() == tmp_path / "old"
+
+
+def test_new_env_var_wins_over_legacy(monkeypatch, tmp_path):
+    monkeypatch.setenv(paths.DATA_DIR_ENV_VAR, str(tmp_path / "new"))
+    monkeypatch.setenv(paths.LEGACY_DATA_DIR_ENV_VAR, str(tmp_path / "old"))
+    assert paths.resolve_data_root() == tmp_path / "new"
+
+
+def test_migrates_old_appname_folder_once(tmp_path):
+    old = tmp_path / "LinguaLoop"
+    target = tmp_path / "LanguageImmersionTools"
+    _make_legacy(old)
+
+    assert paths.migrate_legacy_appname_data(old, target) is True
+    assert (target / "state" / paths.USER_STATE_PATH.name).read_text(encoding="utf-8") == '{"version": 2}'
+    assert (old / "state").exists(), "old folder must be left in place"
+
+    (target / "state" / paths.USER_STATE_PATH.name).write_text('{"version": 3}', encoding="utf-8")
+    assert paths.migrate_legacy_appname_data(old, target) is False
+    assert (target / "state" / paths.USER_STATE_PATH.name).read_text(encoding="utf-8") == '{"version": 3}'
+
+
+def test_appname_migration_skipped_with_env_override(monkeypatch):
+    monkeypatch.setenv(paths.DATA_DIR_ENV_VAR, "somewhere")
+    assert paths.migrate_legacy_appname_data() is False
+
+
 def test_data_root_defaults_outside_source_tree(monkeypatch):
     monkeypatch.delenv(paths.DATA_DIR_ENV_VAR, raising=False)
+    monkeypatch.delenv(paths.LEGACY_DATA_DIR_ENV_VAR, raising=False)
     root = paths.resolve_data_root()
     assert paths.APP_NAME in str(root)
     assert paths.PROJECT_ROOT not in root.parents

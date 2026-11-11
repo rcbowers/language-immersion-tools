@@ -20,7 +20,15 @@ def test_parse_args_defaults_to_bundled_input_file():
 
 def test_default_input_file_lives_in_user_data_folder(monkeypatch):
     monkeypatch.delenv(auto_miner.AUTOMINE_FILE_ENV_VAR, raising=False)
+    monkeypatch.delenv(auto_miner.LEGACY_AUTOMINE_FILE_ENV_VAR, raising=False)
     assert auto_miner.default_input_file() == auto_miner.DATA_ROOT / "automine_inputs.md"
+
+
+def test_default_input_file_legacy_env_fallback(monkeypatch, tmp_path):
+    target = tmp_path / "old" / "queue.md"
+    monkeypatch.delenv(auto_miner.AUTOMINE_FILE_ENV_VAR, raising=False)
+    monkeypatch.setenv(auto_miner.LEGACY_AUTOMINE_FILE_ENV_VAR, str(target))
+    assert auto_miner.default_input_file() == target
 
 
 def test_default_input_file_env_override(monkeypatch, tmp_path):

@@ -135,6 +135,21 @@ class TestContentBrowserGrid(unittest.TestCase):
         self.assertFalse(self.grid.empty_label.isHidden())
         self.assertTrue(self.grid.scroll_area.isHidden())
 
+    def test_content_update_while_hidden_defers_rebuild_until_shown(self):
+        """Position updates fire on every page turn; a hidden grid must not rebuild for them."""
+        self.manager.add_content("C:\test\book.pdf", "pdf", page_count=150)
+        refreshes = []
+        original_refresh = self.grid.refresh
+        self.grid.refresh = lambda: (refreshes.append(True), original_refresh())[1]
+        self.assertFalse(self.grid.isVisible())
+
+        self.manager.update_last_position("C:\test\book.pdf", {"page_index": 5})
+        self.assertEqual(refreshes, [])  # nothing rebuilt while hidden
+
+        self.grid.show()
+        self.assertEqual(len(refreshes), 1)  # caught up when it became visible
+        self.grid.hide()
+
     def test_content_added_creates_items(self):
         """Adding content creates grid items."""
         self.manager.add_content(

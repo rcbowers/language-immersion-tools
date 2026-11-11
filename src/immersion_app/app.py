@@ -16,16 +16,18 @@ from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication
 
 from immersion_app.core.logging_config import setup_logging
-from immersion_app.core.paths import ensure_runtime_dirs, migrate_legacy_data
+from immersion_app.core.paths import ensure_runtime_dirs, migrate_legacy_appname_data, migrate_legacy_data
 from immersion_app.gui.main_window import UnifiedSentenceMinerWindow
 
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("LinguaLoop")
+    app.setApplicationName("Language Immersion Tools")
 
     # Move pre-1.0 ``<repo>/data`` into the per-user data folder (once).
     migrated = migrate_legacy_data()
+    # Carry over the data folder used before the rename from LinguaLoop (once).
+    migrated = migrate_legacy_appname_data() or migrated
     ensure_runtime_dirs()
 
     # Setup logging system with dual output (file + terminal)

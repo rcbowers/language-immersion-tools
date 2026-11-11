@@ -53,6 +53,7 @@ from immersion_app.core.language_config import (
     normalize_language_code,
 )
 from immersion_app.core.mode import WorkspaceMode, ModeManager
+from immersion_app.core.perf import perf_timed
 from immersion_app.core.pdf_service import PDFService
 from immersion_app.core.selection_state import SelectionState
 from immersion_app.core.shortcuts import ShortcutManager
@@ -145,7 +146,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("LinguaLoop Workspace")
+        self.setWindowTitle("Language Immersion Tools")
         self.resize(1680, 980)
 
         self.thread_pool = QThreadPool.globalInstance()
@@ -163,7 +164,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
         # Log startup configuration
         logger.info("=" * 60)
-        logger.info("LinguaLoop Workspace - Application Startup")
+        logger.info("Language Immersion Tools - Application Startup")
         logger.info("=" * 60)
         logger.info(f"Learning Language: {self.user_data['preferences']['learning_language']}")
         logger.info(f"Native Language: {self.user_data['preferences']['native_language']}")
@@ -228,7 +229,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.installEventFilter(self.activity_monitor)
-            # Focus = any LinguaLoop window (main window, dialogs, popovers) is active.
+            # Focus = any Language Immersion Tools window (main window, dialogs, popovers) is active.
             app.applicationStateChanged.connect(self._on_application_state_changed)
             self.usage_tracker.set_window_focused(
                 app.applicationState() == Qt.ApplicationState.ApplicationActive
@@ -245,7 +246,6 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.sentence_counts = {}
         self.anki_process = None
 
-        self.doc = None
         self.current_pdf_path = ""
         self.current_page_index = 0
         self.zoom_factor = 2.0
@@ -292,6 +292,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._startup_overlay.show()
         QTimer.singleShot(0, self._deferred_startup)
 
+    @perf_timed("main_window.deferred_startup")
     def _deferred_startup(self):
         self.workspace_controller.restore_last_session()
         self.command_bar.set_welcome_mode(self.mode_manager.current_mode == WorkspaceMode.WELCOME)
@@ -300,6 +301,11 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self._update_command_bar_stats()
         self._startup_overlay.deleteLater()
         self._startup_overlay = None
+
+    @property
+    def doc(self):
+        """The open PDF document (owned by ``PDFService``), or None."""
+        return self.pdf_service.doc
 
     def _ensure_media_player(self):
         """Lazily create QMediaPlayer the first time a video is loaded."""
@@ -549,7 +555,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             QTimer.singleShot(50, self._reposition_overlays)
 
     def _on_application_state_changed(self, state):
-        """Track app focus for usage time (any LinguaLoop window counts as focused)."""
+        """Track app focus for usage time (any Language Immersion Tools window counts as focused)."""
         self.usage_tracker.set_window_focused(state == Qt.ApplicationState.ApplicationActive)
 
     def _reposition_overlays(self):
@@ -1353,7 +1359,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
             self.subtitle_label.highlight_word_range(None, None)
 
         if had_pdf_selection and self.pdf_service.doc and self.mode_manager.current_mode == WorkspaceMode.PDF:
-            self.pdf_controller.render_current_page()
+            self.pdf_controller.refresh_highlights()
         self._close_popover()
 
     def eventFilter(self, obj, event):
@@ -1503,7 +1509,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
 
     def _refresh_word_highlights(self):
         if self.doc and self.current_pdf_path:
-            self._render_current_page()
+            self.pdf_controller.refresh_word_highlights()
         if hasattr(self, "subtitle_label"):
             self.subtitle_label.set_vocabulary_seen(self.analytics_vocabulary)
 
@@ -1564,7 +1570,6 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         self.pdf_controller.load_pdf(path, initial_page_index=initial_page_index)
         self.current_pdf_path = self.pdf_controller.current_pdf_path
         self.current_page_index = self.pdf_controller.current_page_index
-        self.doc = self.pdf_service.doc
 
     def _render_current_page(self):
         self.pdf_controller.render_current_page()

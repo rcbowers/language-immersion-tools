@@ -17,12 +17,12 @@ from dataclasses import asdict, dataclass, field, replace
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_DECK_NAME = "LinguaLoop"
+DEFAULT_DECK_NAME = "Language Immersion Tools"
 DEFAULT_NOTE_TYPE = "Basic"
 DEFAULT_SENTENCE_FIELD = "Front"
 DEFAULT_TRANSLATION_FIELD = "Back"
 DEFAULT_ANKI_CONNECT_URL = "http://localhost:8765"
-DEFAULT_TAGS = ("sentence-mining", "lingualoop")
+DEFAULT_TAGS = ("sentence-mining", "language-immersion-tools")
 ANKICONNECT_ADDON_CODE = "2055492159"
 
 ANKI_REQUEST_TIMEOUT_SECONDS = 10.0
@@ -33,7 +33,7 @@ ANKI_STARTUP_POLL_SECONDS = 0.5
 
 @dataclass(frozen=True)
 class AnkiSettings:
-    """Where and how LinguaLoop creates Anki notes (user-configurable)."""
+    """Where and how Language Immersion Tools creates Anki notes (user-configurable)."""
 
     deck_name: str = DEFAULT_DECK_NAME
     note_type: str = DEFAULT_NOTE_TYPE

@@ -10,6 +10,41 @@ Findings came from a code review, a test-suite run, and launching the app agains
 
 ---
 
+## Readiness audit (2026-11-11, later the same day)
+
+**Verdict:** the code and docs are close; the release is blocked by **packaging (§6)** and one **red CI**. Without an installer the README's "install from source" path works, so a source-only public release is possible after the "Blockers" below.
+
+### What I checked
+- Local test run: **277 passed** (full run). `test_main_window_pdf_refresh.py::test_theme_refresh_rerenders_open_pdf` failed once with `-x` (`__init__ of UnifiedSentenceMinerWindow not called`) and passed on the next run. Treat as **flaky/order-dependent**.
+- `gh`: repo `ryanbowers166/language-immersion-tools` is still **PRIVATE**, GPL-3.0 detected. `origin/master` = local `master` (4fb19b6), so the rewritten history **is already pushed** (release-day step 2 is done). `public-release-prep` is merged into `master`. Remote also has `feature/epub-support` (open PR, CI running). The old `claude/android-pdf-app-design-hDDy0` branch is gone from the remote.
+- All 70 commits use the `…@users.noreply.github.com` author address (release-day step 3 is done).
+- No personal paths or e-mail in tracked `.py/.md/.bat` files outside `archive/` and `dev/plans/`. No PDFs in the repo root; `archive/` and `data/` are git-ignored.
+- `pyflakes src`: 25 warnings (informational). `main_window.py`: 1,897 lines.
+- Now added: `pyproject.toml`, `__version__ = "0.9.0"`; `build_exe.bat` deleted (installer build to be redone in §6).
+
+### Blockers (do before making the repo public)
+1. [x] **CI was red on `master`** (spacy now in `requirements-dev.txt`; confirm on GitHub) (last two pushes failed). `tests/test_vocab_counter.py` imports `scripts/vocab_counter.py`, which imports `spacy` (not in `requirements*.txt`). Fix: `pytest.importorskip("spacy")` in that test (or add spacy to dev requirements). Also make sure the badge in the README goes green.
+2. [ ] **Uncommitted work on `master`** (16 modified files, new `core/pdf_render_cache.py`, `core/perf.py`, `scripts/perf_*.py`, `dev/perf/`, new tests). It's the PDF render-cache/perf work. Tests pass with it. Commit it (or branch it) and add a CHANGELOG entry per AGENTS.md. `dev/perf/*.json` are benchmark output: decide whether to commit or git-ignore them.
+3. [x] **`CONTRIBUTING.md` removed** (no contributor guide for now); references cleaned up.
+4. [ ] **README advertises "PDF/EPUB reader"** but EPUB support exists only on the unmerged `feature/epub-support` branch. Merge it (once CI is green) or reword the README.
+5. [ ] **Flaky test** above: fix the fixture (the test builds the window without calling `QMainWindow.__init__`).
+6. [ ] Fresh-clone check: clone to a temp dir, create a venv, `pip install -r requirements.txt`, run `python -m immersion_app.app` and `pytest`. Not done yet; CI is the closest evidence and it's failing for the reason in 1.
+
+### Done (no further work)
+§1 tracker fixes, §2 history/personal data/Anki config/LICENSE/data folder, §3 async + data-loss fixes, Settings dialog, getting-started panel, §4 tests + CI file, §5 README/CHANGELOG/templates. History rewrite and author-email steps from the release-day list.
+
+### Left, in priority order
+1. Blockers 1-6 above (about half a day).
+2. **§6 Packaging**: nothing started beyond split requirements. Minimum viable: add `__version__ = "0.9.0"` and show it in the app, `pyproject.toml` with entry point, PyInstaller one-folder `.spec` (fonts, `img/`, Qt multimedia plugins), CI build on tag, README SmartScreen note, FFmpeg check. Torch-free libraries (Argos, faster-whisper) are optional for v0.9 if offline translation stays an opt-in source install.
+3. **§7 auto-miner in the app**: not started. Safe to defer past 0.9.0; the CLI already works and shares settings.
+4. **§3 remainder**: `main_window.py` break-up (20 `hasattr` guards). Defer; not user-visible.
+5. Related plans in `dev/plans/` (`epub-support`, `plan-test-coverage`, `plan-mcp`) are not release blockers except EPUB (blocker 4).
+
+### Remaining release-day steps
+Repo is already pushed. Left: confirm CI is green, open Settings and pick your deck on your own install, optionally delete the history backup bundle, tag `v0.9.0`, then flip the repo to public.
+
+---
+
 ## Suggested order
 
 1. [x] Clean history and remove personal paths (§2). *History rewritten locally; force-push still pending (see "Release-day steps").*
@@ -155,8 +190,8 @@ Result now: **254 passed, 0 failed.** Plain `python -m pytest` works with no fla
   - FFmpeg, online vs offline translation (with privacy note and download size)
   - a full shortcut table, the queue and study-time explanation, the data folder
   - companion tools, troubleshooting, licences
-- [x] `CONTRIBUTING.md` (setup, tests, architecture in one minute, PR checklist). Issue templates (bug, feature) and a PR template under `.github/`.
-- [x] Architecture docs stay in `docs/` and are linked from CONTRIBUTING. `docs/architecture.md` was updated for the data folder, settings and tracking.
+- [x] Issue templates (bug, feature) and a PR template under `.github/`.
+- [x] Architecture docs stay in `docs/` and stay as reference docs. `docs/architecture.md` was updated for the data folder, settings and tracking.
 - [x] `CHANGELOG.md` at the root:
   - an *Unreleased: 0.9.0, first public release* section in Keep-a-Changelog style
   - the previous dated log kept under "Development history"
@@ -167,11 +202,11 @@ Result now: **254 passed, 0 failed.** Plain `python -m pytest` works with no fla
 
 ## 6. Packaging as an installer (TO DO)
 
-The blocker is size. `torch`, `transformers` and `openai-whisper` add several GB. The current `build_exe.bat` uses the old name and won't pick up the fonts or logo.
+The blocker is size. `torch`, `transformers` and `openai-whisper` add several GB. The old `build_exe.bat` was deleted; the new build is still to write.
 
 - [~] Optional extras: done at the requirements level (`requirements-offline.txt`, `requirements-media.txt`). Still to do: a `pyproject.toml` with a `lingualoop` entry point and extras.
 - [ ] Swap in lighter libraries that don't need torch: Argos Translate (ctranslate2) instead of MarianMT, and `faster-whisper` instead of `openai-whisper`. Download models on demand into the data folder.
-- [ ] PyInstaller **one-folder** build with a `.spec` that bundles fonts, images and the Qt multimedia/FFmpeg plugins. Replace `build_exe.bat`.
+- [ ] PyInstaller **one-folder** build with a `.spec` that bundles fonts, images and the Qt multimedia/FFmpeg plugins. 
 - [ ] **Inno Setup** installer (Start-menu shortcut, uninstaller, per-user install).
 - [ ] GitHub Action: build on tag push and attach to the Release.
 - [ ] Bundle FFmpeg, or check for it on first run (add to the Getting started checklist).

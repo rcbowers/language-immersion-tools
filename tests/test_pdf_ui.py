@@ -150,7 +150,10 @@ class PDFControllerActivityTests(unittest.TestCase):
             ),
             appearance_manager=SimpleNamespace(current_mode=None),
             analytics_vocabulary=set(),
-            pdf_label=SimpleNamespace(setPixmap=lambda _: None, resize=lambda _: None),
+            pdf_label=SimpleNamespace(
+                setPixmap=lambda _: None, resize=lambda _: None,
+                set_word_highlights=lambda *_: None, set_selection_rects=lambda *_: None,
+            ),
             selection=SimpleNamespace(
                 pdf=SimpleNamespace(highlight_bboxes=[], selected_words=[], anchor_key=None),
                 translation="",
@@ -176,10 +179,9 @@ class PDFControllerActivityTests(unittest.TestCase):
 
         pdf_service = SimpleNamespace(
             doc=doc,
-            render_page=lambda idx, zoom: SimpleNamespace(
-                samples=b"\xff" * 60, width=20, height=10, stride=60,
-                words=[], word_order=[], line_map={}, page_count=5,
-            ),
+            render_async=lambda *args, **kwargs: None,  # never completes: these tests only check bookkeeping
+            page_count=lambda: 5,
+            page_size=lambda _idx: (200.0, 300.0),
             word_key=lambda w: str(w),
         )
 
@@ -197,10 +199,7 @@ class PDFControllerActivityTests(unittest.TestCase):
     def test_next_page_records_activity(self):
         controller, calls = self._make_controller()
 
-        with patch("immersion_app.gui.controllers.pdf_controller.QImage"), \
-             patch("immersion_app.gui.controllers.pdf_controller.QPainter"), \
-             patch("immersion_app.gui.controllers.pdf_controller.QPixmap"):
-            controller.next_page()
+        controller.next_page()
 
         self.assertEqual(controller.current_page_index, 3)
         self.assertEqual(len(calls), 1, "next_page() should call record_activity() once")
@@ -208,10 +207,7 @@ class PDFControllerActivityTests(unittest.TestCase):
     def test_prev_page_records_activity(self):
         controller, calls = self._make_controller()
 
-        with patch("immersion_app.gui.controllers.pdf_controller.QImage"), \
-             patch("immersion_app.gui.controllers.pdf_controller.QPainter"), \
-             patch("immersion_app.gui.controllers.pdf_controller.QPixmap"):
-            controller.prev_page()
+        controller.prev_page()
 
         self.assertEqual(controller.current_page_index, 1)
         self.assertEqual(len(calls), 1, "prev_page() should call record_activity() once")
@@ -219,10 +215,7 @@ class PDFControllerActivityTests(unittest.TestCase):
     def test_jump_to_page_records_activity(self):
         controller, calls = self._make_controller()
 
-        with patch("immersion_app.gui.controllers.pdf_controller.QImage"), \
-             patch("immersion_app.gui.controllers.pdf_controller.QPainter"), \
-             patch("immersion_app.gui.controllers.pdf_controller.QPixmap"):
-            controller.jump_to_page(5)
+        controller.jump_to_page(5)
 
         self.assertEqual(controller.current_page_index, 4)
         self.assertEqual(len(calls), 1, "jump_to_page() should call record_activity() once")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interactively mine phrases into LinguaLoop Anki cards.
+"""Interactively mine phrases into Language Immersion Tools Anki cards.
 
 The queue file groups words under ``# <source>`` headers, where the source is a
 local PDF/SRT path or a web URL.
@@ -63,13 +63,18 @@ from immersion_app.core.user_data import load_user_data
 
 
 # Default queue file. Override with the INPUT_FILE argument or the
-# LINGUALOOP_AUTOMINE_FILE environment variable (e.g. to keep the queue in a
-# notes vault). Relative paths resolve against the current directory.
-AUTOMINE_FILE_ENV_VAR = "LINGUALOOP_AUTOMINE_FILE"
+# IMMERSION_AUTOMINE_FILE environment variable (e.g. to keep the queue in a
+# notes vault). Relative paths resolve against the current directory. The old
+# LINGUALOOP_AUTOMINE_FILE name is still honored as a fallback.
+AUTOMINE_FILE_ENV_VAR = "IMMERSION_AUTOMINE_FILE"
+LEGACY_AUTOMINE_FILE_ENV_VAR = "LINGUALOOP_AUTOMINE_FILE"
 
 
 def default_input_file() -> Path:
-    override = os.environ.get(AUTOMINE_FILE_ENV_VAR, "").strip()
+    override = (
+        os.environ.get(AUTOMINE_FILE_ENV_VAR, "").strip()
+        or os.environ.get(LEGACY_AUTOMINE_FILE_ENV_VAR, "").strip()
+    )
     if override:
         return Path(override).expanduser()
     return DATA_ROOT / "automine_inputs.md"
@@ -152,7 +157,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--deck",
         default=None,
-        help="Anki deck to add cards to (default: the deck chosen in LinguaLoop's Settings).",
+        help="Anki deck to add cards to (default: the deck chosen in Language Immersion Tools's Settings).",
     )
     args = parser.parse_args(argv)
     if args.input_file is None:
@@ -659,7 +664,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         settings = get_anki_settings()
         print(
             f"Error: AnkiConnect is unavailable, or deck '{settings.deck_name}' / note type "
-            f"'{settings.note_type}' does not exist. Choose them in LinguaLoop's Settings or pass --deck.",
+            f"'{settings.note_type}' does not exist. Choose them in Language Immersion Tools's Settings or pass --deck.",
             file=sys.stderr,
         )
         return 1

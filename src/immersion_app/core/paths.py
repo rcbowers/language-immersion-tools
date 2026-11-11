@@ -3,12 +3,13 @@
 Runtime data (user state, queue, logs, previews) lives in a per-user data
 folder, never inside the source tree or install directory:
 
-* Windows: ``%APPDATA%\\LinguaLoop``
-* macOS:   ``~/Library/Application Support/LinguaLoop``
-* Linux:   ``~/.local/share/LinguaLoop``
+* Windows: ``%APPDATA%\\LanguageImmersionTools``
+* macOS:   ``~/Library/Application Support/LanguageImmersionTools``
+* Linux:   ``~/.local/share/LanguageImmersionTools``
 
-Set the ``LINGUALOOP_DATA_DIR`` environment variable to use a different folder
-(used by the test suite and for portable installs).
+Set the ``IMMERSION_DATA_DIR`` environment variable to use a different folder
+(used by the test suite and for portable installs). The old
+``LINGUALOOP_DATA_DIR`` name is still honored as a fallback.
 """
 
 from __future__ import annotations
@@ -23,8 +24,11 @@ from platformdirs import user_data_dir
 
 logger = logging.getLogger(__name__)
 
-APP_NAME = "LinguaLoop"
-DATA_DIR_ENV_VAR = "LINGUALOOP_DATA_DIR"
+APP_NAME = "LanguageImmersionTools"
+DATA_DIR_ENV_VAR = "IMMERSION_DATA_DIR"
+# Names used before the rebrand from LinguaLoop; kept so existing installs keep working.
+LEGACY_APP_NAME = "LinguaLoop"
+LEGACY_DATA_DIR_ENV_VAR = "LINGUALOOP_DATA_DIR"
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PACKAGE_ROOT.parent
@@ -32,7 +36,10 @@ PROJECT_ROOT = SRC_ROOT.parent
 
 
 def resolve_data_root() -> Path:
-    override = os.environ.get(DATA_DIR_ENV_VAR, "").strip()
+    override = (
+        os.environ.get(DATA_DIR_ENV_VAR, "").strip()
+        or os.environ.get(LEGACY_DATA_DIR_ENV_VAR, "").strip()
+    )
     if override:
         return Path(override).expanduser()
     return Path(user_data_dir(APP_NAME, appauthor=False, roaming=True))
@@ -61,6 +68,34 @@ LEGACY_USER_STATE_PATH = PROJECT_ROOT / "sentence_miner_user_data.json"
 def ensure_runtime_dirs() -> None:
     for path in (QUEUE_DIR, LOG_DIR, STATE_DIR, PREVIEW_DIR):
         path.mkdir(parents=True, exist_ok=True)
+
+
+def migrate_legacy_appname_data(old_root: Path | None = None, data_root: Path | None = None) -> bool:
+    """Copy the pre-rebrand ``LinguaLoop`` data folder into the new one once.
+
+    Only runs when the new folder has no user state yet, so it never overwrites
+    newer data. Skipped when a data-dir environment override is set. The old
+    folder is left in place. Returns True if data was copied.
+    """
+    if old_root is None:
+        if os.environ.get(DATA_DIR_ENV_VAR, "").strip() or os.environ.get(LEGACY_DATA_DIR_ENV_VAR, "").strip():
+            return False
+        old_root = Path(user_data_dir(LEGACY_APP_NAME, appauthor=False, roaming=True))
+    data_root = DATA_ROOT if data_root is None else data_root
+    try:
+        if old_root.resolve() == data_root.resolve():
+            return False
+    except OSError:
+        return False
+    if not old_root.is_dir() or (data_root / "state" / USER_STATE_PATH.name).exists():
+        return False
+    try:
+        shutil.copytree(old_root, data_root, dirs_exist_ok=True)
+    except OSError as exc:
+        logger.warning("Could not migrate data from %s: %s", old_root, exc)
+        return False
+    logger.info("Migrated data from %s to %s", old_root, data_root)
+    return True
 
 
 def migrate_legacy_data(legacy_root: Path | None = None, data_root: Path | None = None) -> bool:

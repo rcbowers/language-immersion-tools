@@ -108,7 +108,7 @@ class PDFStatusBar(QWidget):
         right_layout.setSpacing(8)
 
         self.usage_tracking_label = QLabel("○")
-        self.usage_tracking_label.setToolTip("Study time: paused (no input for 2 minutes, or LinguaLoop is not focused)")
+        self.usage_tracking_label.setToolTip("Study time: paused (no input for 2 minutes, or Language Immersion Tools is not focused)")
         self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(active=False))
         right_layout.addWidget(self.usage_tracking_label, alignment=Qt.AlignmentFlag.AlignVCenter)
 
@@ -349,5 +349,5 @@ class PDFStatusBar(QWidget):
             self.usage_tracking_label.setToolTip("Study time: recording")
         else:
             self.usage_tracking_label.setText("○")
-            self.usage_tracking_label.setToolTip("Study time: paused (no input for 2 minutes, or LinguaLoop is not focused)")
+            self.usage_tracking_label.setToolTip("Study time: paused (no input for 2 minutes, or Language Immersion Tools is not focused)")
         self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(active))

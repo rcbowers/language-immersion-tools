@@ -1,4 +1,4 @@
-"""Comprehensive logging configuration for LinguaLoop.
+"""Comprehensive logging configuration for Language Immersion Tools.
 
 Provides dual-output logging:
 - File logs: DEBUG level, detailed format with timestamps and module info

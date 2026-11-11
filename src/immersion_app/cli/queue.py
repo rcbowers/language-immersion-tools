@@ -24,7 +24,7 @@ def main():
         settings = get_anki_settings()
         logger.error(
             f"AnkiConnect is not available, or deck '{settings.deck_name}' / note type "
-            f"'{settings.note_type}' is missing (choose them in LinguaLoop's Settings)"
+            f"'{settings.note_type}' is missing (choose them in Language Immersion Tools's Settings)"
         )
         return 1
 

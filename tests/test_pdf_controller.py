@@ -50,6 +50,7 @@ class PDFControllerTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_click_updates_selection_and_requests_translation(self):
+        selection_rect_updates = []
         window = SimpleNamespace(
             _clean_word=lambda text: text,
             _update_source_summary=lambda: None,
@@ -59,7 +60,11 @@ class PDFControllerTests(unittest.TestCase):
             current_source_location="",
             current_source_name="book.pdf",
             mode_manager=SimpleNamespace(current_mode=None),
-            pdf_label=SimpleNamespace(setPixmap=lambda _pixmap: None, resize=lambda _size: None),
+            pdf_label=SimpleNamespace(
+                setPixmap=lambda _pixmap: None, resize=lambda _size: None,
+                set_word_highlights=lambda *_: None,
+                set_selection_rects=lambda rects, *_: selection_rect_updates.append(list(rects)),
+            ),
             command_bar=SimpleNamespace(set_page_info=lambda *_args: None),
             pdf_status_bar=SimpleNamespace(set_zoom_level=lambda *_args: None),
             appearance_manager=SimpleNamespace(current_mode=None),
@@ -74,13 +79,16 @@ class PDFControllerTests(unittest.TestCase):
         controller.page_word_order = list(controller.page_words)
         controller.page_word_index = {controller.page_word_order[0]: 0}
         controller.page_line_words = {(0, 0): controller.page_words}
-        controller.render_current_page = lambda: None
+        rendered = []
+        controller.render_current_page = lambda: rendered.append(True)
 
         controller.click_at(QPoint(5, 5), Qt.KeyboardModifier.NoModifier)
 
         self.assertEqual(selection.word, "hola")
         self.assertEqual(selection.sentence, "hola mundo")
         self.assertEqual(mining_controller.translation_requests, ["hola"])
+        self.assertEqual(rendered, [], "a click must only move the overlay, not re-render the page")
+        self.assertEqual(len(selection_rect_updates[-1]), 1)
 
 
 if __name__ == "__main__":

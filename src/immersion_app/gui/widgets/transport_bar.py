@@ -53,7 +53,7 @@ class TransportBar(QWidget):
         self.play_pause_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {Theme.ACCENT};
-                color: white;
+                color: {Theme.ACCENT_TEXT};
                 border: none;
                 border-radius: 16px;
                 font-size: 14px;
@@ -173,7 +173,7 @@ class TransportBar(QWidget):
 
         # Usage tracking indicator
         self.usage_tracking_label = QLabel("○")
-        self.usage_tracking_label.setToolTip("Study time: paused (no input for 2 minutes, or LinguaLoop is not focused)")
+        self.usage_tracking_label.setToolTip("Study time: paused (no input for 2 minutes, or Language Immersion Tools is not focused)")
         self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(active=False))
         layout.addWidget(self.usage_tracking_label)
 
@@ -278,7 +278,7 @@ class TransportBar(QWidget):
         self.play_pause_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {Theme.ACCENT};
-                color: white;
+                color: {Theme.ACCENT_TEXT};
                 border: none;
                 border-radius: {int(16 * s)}px;
                 font-size: {int(14 * s)}px;
@@ -434,7 +434,7 @@ class TransportBar(QWidget):
             self.usage_tracking_label.setToolTip("Study time: recording")
         else:
             self.usage_tracking_label.setText("○")
-            self.usage_tracking_label.setToolTip("Study time: paused (no input for 2 minutes, or LinguaLoop is not focused)")
+            self.usage_tracking_label.setToolTip("Study time: paused (no input for 2 minutes, or Language Immersion Tools is not focused)")
         self.usage_tracking_label.setStyleSheet(self._get_usage_tracking_style(active))
 
     @staticmethod

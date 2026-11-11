@@ -25,7 +25,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: LinguaLoop version or commit
+      label: Language Immersion Tools version or commit
   - type: input
     id: environment
     attributes:
