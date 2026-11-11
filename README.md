@@ -1,5 +1,3 @@
-<p align="center"><img src="img/logo.png" alt="LinguaLoop" width="420"></p>
-
 # Language Immersion Tools
 
 Language Immersion Tools (LIT) is a free desktop app for immersion-based language learning according to methods like Refold.la (not affiliated). Open a PDF or subtitled video, click any word you don't know to see the translation, and automatically generate an Anki card with the target word, sentence context, and translation.
