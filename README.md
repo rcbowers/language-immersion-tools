@@ -1,34 +1,37 @@
 <p align="center"><img src="img/logo.png" alt="LinguaLoop" width="420"></p>
 
-# LinguaLoop
+# Language Immersion Tools
 
-**Read and watch in the language you're learning, click any word you don't know, and turn it into an Anki card in one keystroke.**
+Language Immersion Tools (LIT) is a free desktop app for immersion-based language learning according to methods like Refold.la (not affiliated). Open a PDF or subtitled video, click any word you don't know to see the translation, and automatically generate an Anki card with the target word, sentence context, and translation.
 
-LinguaLoop is a free desktop app for *active immersion*: open a PDF (a novel, a comic, an article) or a video with subtitles, click a word or phrase to see its translation in context, and send it to Anki together with the sentence it came from. It keeps track of the words you've already mined, highlights them as you read, and logs how much time you actually spend studying.
+I initially built this for my own personal use. I found that I was wasting a lot of time while doing active immersion in ebooks or TV shows. When I found a word, I would have to stop, copy the word into Google Translate, then manually create an Anki card. I built this to consolidate and partially automate that workflow so I could spend more time actually immersing. LIT grew organically over time as I tweaked and added new features that I wanted, and I personally use it for immersion most days. 
+
+Requests for new features are more than welcome! Please create an issue for this. An experimental branch will be used to contain all the niche features that I add for myself; you may use this branch if you'd like.
+
+For the nerds, LIT also tracks analytics about your activity and progress - time spent actively using the app, total words mined, the relative frequency of those words (according to standard lists), etc. This is all stored locally for you to use as you please.
 
 ![Reading a Spanish PDF with a translation popover](docs/screenshots/reader.png)
 
 ## Features
 
-- **PDF reader**: click a word to translate it, Shift+click to select a phrase, Ctrl+hover for quick lookups. Light and dark mode (pages are inverted in dark mode).
-- **Video player with clickable subtitles**: load an `.srt` (or generate one with Whisper), click subtitle words while you watch, nudge subtitle timing with Ctrl+←/→.
-- **One-keystroke Anki cards**: the sentence becomes the front with your word highlighted; the translation goes on the back. If Anki isn't running, cards are queued and sent later.
-- **Known-word highlighting**: words already in your Anki deck are highlighted, so new vocabulary stands out.
-- **Online or offline translation**: Google Translate (online) or MarianMT models running locally (optional install).
-- **Study-time tracking**: an indicator in the status bar shows when time is being counted; the Activity view shows study time, streaks, pages read and video minutes watched.
-- **Library and progress**: recently opened sources, resume where you left off, mark pages and episodes complete.
+- PDF/EPUB reader. Click a word to translate it, Shift+click to translate phrase, or hold Ctrl and hover for a quick lookup. 
+- Video player with clickable subtitles. Load an `.srt` file. Subtitles can be clicked and mined into Anki cards just like documents.
+- Automated Anki card generation. Following the Refold method (refold.la/roadmap/library/sentence-mining), you can click "add to Anki" after translating a word or phrase to automatically generate an Anki card. The front of the card contains the sentence the word came from (dynamically detected by the app) with the target word highlighted, and the back shows the target word's translation.
+- Online or offline translation. Uses Google Translate by default, or MarianMT models running locally if you install the offline extras.
+- (Coming soon) Model Context Protocol support for LLM integration. Features TBD; will be fully optional.
 
-Supported languages: Spanish, French, Italian, Japanese, Chinese and English (any pair).
+Currently supports Spanish, French, Italian, Japanese, Chinese and English, in any combination.
 
 ## Install
+A packaged installer is coming soon, but for now you will need to clone this repository and install from source. Your LLM of choice (ChatGPT, Claude, Gemini, Grok, etc.) can assist with this if needed.
 
 ### Requirements
 
-- **Anki** desktop with the **AnkiConnect** add-on: in Anki choose *Tools → Add-ons → Get Add-ons…* and enter code `2055492159`, then restart Anki.
-- **Python 3.11 or newer** (3.12 recommended). A packaged Windows installer is planned. Until then, LinguaLoop runs from source.
-- **FFmpeg** on your `PATH`, only if you want to generate subtitles or use the audio tools.
+- Anki desktop with the AnkiConnect add-on. In Anki go to *Tools → Add-ons → Get Add-ons…*, enter `2055492159`, and restart Anki.
+- Python 3.11 or newer. 
+- FFmpeg on your `PATH`. You only need this for generating subtitles or using the audio tools.
 
-### From source
+### Installing from from source
 
 ```bash
 git clone https://github.com/ryanbowers166/language-immersion-tools.git
@@ -42,11 +45,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Optional extras:
+There are two optional extras:
 
 ```bash
 pip install -r requirements-offline.txt   # offline translation (MarianMT + PyTorch, several GB)
-pip install -r requirements-media.txt     # Whisper subtitle generation and the CLI tools
 ```
 
 ### Run
@@ -55,18 +57,17 @@ pip install -r requirements-media.txt     # Whisper subtitle generation and the 
 # Windows
 run_lingualoop.bat
 # any platform
-python -m immersion_app.app        # with src/ on PYTHONPATH, e.g. PYTHONPATH=src
+python -m immersion_app.app
 ```
 
 ## First run
 
-The welcome screen shows a **Getting started** checklist:
+The welcome screen has a **Getting started** checklist that walks you through setup:
 
 ![Welcome screen](docs/screenshots/welcome.png)
 
-1. **Connect Anki.** Open Anki (with AnkiConnect installed), then open **Settings** (Ctrl+,) → *Load from Anki* and pick the **deck** cards should go to, the **note type**, and which fields hold the **sentence** and the **translation**. The default is a deck called `LinguaLoop` using the built-in `Basic` note type (`Front` / `Back`). *Create deck* makes the deck if it doesn't exist yet.
-2. **Choose your languages**: the language you're learning and the one to translate into.
-3. **Open a PDF or video** with **Open PDF or video…** (Ctrl+O).
+1. **Connect Anki.** Open Anki first, then go to **Settings** (Ctrl+,) → *Load from Anki*. Pick the deck you want cards to go to, the note type, and which fields should hold the sentence and the translation. By default it uses a deck called `LinguaLoop` with the built-in `Basic` note type (`Front` / `Back`). If the deck doesn't exist yet, *Create deck* will make it.
+2. **Select native and target languages.** 
 
 ![Settings](docs/screenshots/settings.png)
 
@@ -90,32 +91,32 @@ The welcome screen shows a **Getting started** checklist:
 | Close the translation popover | Esc |
 | Settings | Ctrl+, |
 
-**Queue:** when Anki isn't reachable, cards are saved to a queue instead of being lost. Send them with **View Queue → Process Queue** once Anki is open.
+If Anki isn't running when you add a card, it goes into a queue so you don't lose it. Once Anki is open, go to **View Queue → Process Queue** to send everything.
 
-**Study time:** the dot in the status bar is filled (●) while time is being counted. It counts while LinguaLoop is the active app and you've used the mouse or keyboard in the last 2 minutes (or a video is playing), and pauses otherwise. It picks up again as soon as you come back.
+The dot in the status bar fills in (●) when study time is being counted. It counts while LinguaLoop is the active window and you've touched the mouse or keyboard in the last 2 minutes, or while a video is playing. Otherwise it pauses.
 
 ![Dark mode](docs/screenshots/reader_dark.png)
 
-## Translation: online vs offline
+## Online vs offline translation
 
-- **Online** (default) uses Google Translate via the unofficial [`googletrans`](https://pypi.org/project/googletrans/) library. It needs an internet connection and sends the words you look up to Google. Because it's unofficial it can occasionally break or be rate-limited. If you hit that, turn off *Pre-translate words on each page* in Settings, or switch to offline.
-- **Offline** uses [MarianMT](https://huggingface.co/Helsinki-NLP) models via Hugging Face Transformers. Install `requirements-offline.txt`. The model for each language pair downloads the first time you use it (a few hundred MB), and after that nothing leaves your computer.
+- **Online** is the default. It uses Google Translate through [`googletrans`](https://pypi.org/project/googletrans/), which is an unofficial library. It needs internet and sends the words you look up to Google, and since it's unofficial it sometimes breaks or gets rate limited. If that happens, turn off *Pre-translate words on each page* in Settings or switch to offline.
+- **Offline** uses [MarianMT](https://huggingface.co/Helsinki-NLP) models through Hugging Face Transformers. Install `requirements-offline.txt` first. The first time you use a language pair it downloads that model (a few hundred MB). After that everything stays on your computer.
 
-Switch between them in Settings, or click the *Translation* badge in the status bar.
+You can switch in Settings or by clicking the *Translation* badge in the status bar.
 
 ## Where your data lives
 
-LinguaLoop keeps its settings, card queue, study history and logs in a per-user folder:
+Settings, the card queue, study history and logs are all stored in a per-user folder:
 
 - Windows: `%APPDATA%\LinguaLoop`
 - macOS: `~/Library/Application Support/LinguaLoop`
 - Linux: `~/.local/share/LinguaLoop`
 
-*Settings → Data folder → Open* takes you there. Set the `LINGUALOOP_DATA_DIR` environment variable to use a different folder (e.g. a synced or portable one). If you used an older version that stored data in the repo's `data/` folder, it's copied over automatically the first time you start this version.
+*Settings → Data folder → Open* will open it for you. If you want it somewhere else (like a synced folder or a thumb drive), set the `LINGUALOOP_DATA_DIR` environment variable. If you're upgrading from an older version that kept data in the repo's `data/` folder, it gets copied over automatically the first time you launch.
 
 ## Companion tools
 
-Command-line helpers live in `src/immersion_app/cli` (run with `src` on `PYTHONPATH`):
+There are also some command-line tools in `src/immersion_app/cli`. Run them with `src` on your `PYTHONPATH`:
 
 ```bash
 python -m immersion_app.cli.queue                                    # send queued cards to Anki
@@ -124,31 +125,31 @@ python -m immersion_app.cli.audio "https://youtube.com/watch?v=..."  # download/
 python -m immersion_app.cli.analyze books --types srt pdf            # word-frequency analysis
 ```
 
-**`auto_miner.py`** is an interactive terminal miner for batches of words. List words under `# <source>` headers (a PDF/SRT path or a web URL) in a markdown file. It finds each word in its source, lets you choose the example sentence and adjust the context, and creates the cards.
+`auto_miner.py` is a terminal tool for mining a batch of words at once. Make a markdown file with words listed under `# <source>` headers, where the source is a PDF, an SRT file or a web URL. It finds each word in its source, lets you pick the example sentence and adjust how much context to include, and then makes the cards.
 
 ```bash
 python auto_miner.py [INPUT_FILE] [--deck "My Deck"] [--source-lang es] [--target-lang en]
 ```
 
-The default input file is `automine_inputs.md` in the data folder. Point it elsewhere with the `LINGUALOOP_AUTOMINE_FILE` environment variable (handy for keeping the list in a notes app). The terminal UI currently needs Windows.
+By default it reads `automine_inputs.md` from the data folder. You can point it at a different file with `LINGUALOOP_AUTOMINE_FILE` if you'd rather keep your word list in a notes app. The terminal UI only works on Windows for now.
 
-`scripts/` has a few extra utilities (vocabulary counter, AV1→H.264 video converter).
+`scripts/` has a couple other utilities: a vocabulary counter and an AV1→H.264 video converter.
 
 ## Troubleshooting
 
-- **"Anki: Not connected"**: make sure Anki is open and AnkiConnect is installed (code `2055492159`). Click the badge to re-check. If Anki is running but the deck or note type doesn't exist, the checklist and Settings tell you what's missing.
-- **Translations fail or say "rate limited" (HTTP 429)**: Google is throttling the unofficial API. Turn off pre-translation in Settings, wait a while, or use offline translation.
-- **Video won't play**: LinguaLoop uses Qt's FFmpeg backend. Some AV1/HEVC files need converting. `scripts/convert_to_h264.ps1` does this on Windows.
-- **Logs**: in the data folder under `logs/`, one file per session.
+- **Anki says "Not connected."** Make sure Anki is open and AnkiConnect is installed (code `2055492159`), then click the badge to check again. If Anki is running but your deck or note type is missing, the checklist and Settings will tell you which one.
+- **Translations fail or say "rate limited" (HTTP 429).** Google is throttling the unofficial API. Turn off pre-translation in Settings and wait a while, or switch to offline translation.
+- **A video won't play.** LinguaLoop uses Qt's FFmpeg backend, and some AV1 and HEVC files won't play with it. Convert them to H.264 first (`scripts/convert_to_h264.ps1` does this on Windows).
+- **Logs** are in the data folder under `logs/`, one file per session. If you open an issue, attaching the log helps a lot.
 
 ## Contributing
 
-Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and the architecture overview.
+Bug reports and PRs are welcome! Check out [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and an overview of how the code is organized.
 
 ## License
 
 LinguaLoop is free software under the [GNU General Public License v3.0](LICENSE).
 
-It builds on [PySide6/Qt](https://www.qt.io/qt-for-python) (LGPL-3.0), [PyMuPDF](https://pymupdf.readthedocs.io/) (AGPL-3.0), [googletrans](https://pypi.org/project/googletrans/) (MIT), and optionally [Transformers](https://github.com/huggingface/transformers)/[PyTorch](https://pytorch.org/) and [Whisper](https://github.com/openai/whisper). It bundles the [Inter](https://rsms.me/inter/) typeface (SIL Open Font License 1.1, see `src/immersion_app/gui/fonts/OFL.txt`). LinguaLoop is not affiliated with Anki or AnkiConnect.
+It's built on [PySide6/Qt](https://www.qt.io/qt-for-python) (LGPL-3.0), [PyMuPDF](https://pymupdf.readthedocs.io/) (AGPL-3.0) and [googletrans](https://pypi.org/project/googletrans/) (MIT), plus [Transformers](https://github.com/huggingface/transformers)/[PyTorch](https://pytorch.org/) and [Whisper](https://github.com/openai/whisper) if you install the extras. It bundles the [Inter](https://rsms.me/inter/) typeface (SIL Open Font License 1.1, see `src/immersion_app/gui/fonts/OFL.txt`). LinguaLoop isn't affiliated with Anki or AnkiConnect.
 
-Only use LinguaLoop with content you have the right to use. The repository ships no books or videos.
+Please only use it with books and videos you have the right to use. The repo doesn't include any.
