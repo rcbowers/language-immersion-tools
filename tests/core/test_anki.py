@@ -185,7 +185,7 @@ def test_setup_model_field_lookup_failure_does_not_crash(monkeypatch):
 
 
 def test_connection_test_wrapper(monkeypatch):
-    _fake_invoke(monkeypatch, {"version": 6, "deckNames": ["LinguaLoop"], "modelNames": ["Basic"], "modelFieldNames": ["Front", "Back"]})
+    _fake_invoke(monkeypatch, {"version": 6, "deckNames": ["Language Immersion Tools"], "modelNames": ["Basic"], "modelFieldNames": ["Front", "Back"]})
     assert anki.test_anki_connection() is True
     _fake_invoke(monkeypatch, {"version": ConnectionError("x")})
     assert anki.test_anki_connection() is False
@@ -260,7 +260,7 @@ def test_fetch_words_parses_red_span_bracket_and_bare_forms(monkeypatch):
     ]
     seen = _fake_invoke(monkeypatch, {"findNotes": [1, 2, 3, 4, 5, 6], "notesInfo": notes})
     assert anki.fetch_deck_words() == {"gato", "perro", "libro", "nested"}
-    assert seen[0][1]["query"] == 'deck:"LinguaLoop"'
+    assert seen[0][1]["query"] == 'deck:"Language Immersion Tools"'
 
 
 def test_fetch_words_empty_deck_skips_notes_info(monkeypatch):

@@ -16,6 +16,7 @@ All notable changes to Language Immersion Tools. Versions follow [semantic versi
 - **Renamed from LinguaLoop to Language Immersion Tools.** Your data folder is copied from `%APPDATA%\LinguaLoop` to `%APPDATA%\LanguageImmersionTools` on first start (the old folder is left in place). The `LINGUALOOP_DATA_DIR`, `LINGUALOOP_AUTOMINE_FILE` and `LINGUALOOP_PERF` environment variables still work, but are now `IMMERSION_DATA_DIR`, `IMMERSION_AUTOMINE_FILE` and `IMMERSION_PERF`. New installs default to the `Language Immersion Tools` Anki deck and tag; existing settings are unchanged. The launcher is now `run_immersion.bat`.
 - **Your data moved** out of the source folder into a per-user folder (`%APPDATA%\LanguageImmersionTools` on Windows). Existing `data/` contents are copied over automatically on first start. Override with `IMMERSION_DATA_DIR`.
 - The Anki deck is no longer hard-coded. New installs default to a `Language Immersion Tools` deck with the `Basic` note type. **If you upgraded, open Settings once and pick your existing deck.**
+- Test suite grew from 254 to about 600 tests (line coverage 48% to 73%), covering the Anki/translation mining path, the card queue, recent files, controllers and a main-window smoke test. CI now prints a coverage report (no failure threshold yet).
 - Adding a card and processing the queue now run in the background, so a slow or busy Anki no longer freezes the window.
 - Checking whether online/offline translation is available no longer blocks the window at startup or when toggling.
 - Welcome screen: primary *Open PDF or video…* button near the top, no duplicate Open/Recent buttons, a centred library empty state, and the page scrolls instead of squashing on small windows.
@@ -25,6 +26,7 @@ All notable changes to Language Immersion Tools. Versions follow [semantic versi
 
 ### Fixed
 - Switching theme or finishing the Anki vocabulary sync did not refresh word highlights on an open PDF.
+- Pressing Ctrl+Return after a failed translation could add an Anki card (or queue one) with `Translation error: ...` as its back. Cards now need a real translation.
 - **Study-time tracker**: time stopped being counted for good after the first 2-minute break. It now resumes on your next action.
 - **Study-time tracker**: background work (page pre-translation, selection resets) made the indicator show *active* when you weren't doing anything. Only real input (mouse, scrolling, keys), visible translations and video playback count now.
 - Study time no longer pauses while you're in one of the app's own dialogs, the indicator updates within seconds, time after midnight counts toward the new day, and reopening a book at a saved page no longer counts as pages read.
