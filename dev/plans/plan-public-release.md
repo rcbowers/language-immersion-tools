@@ -29,8 +29,8 @@ The project was renamed from LinguaLoop to Language Immersion Tools. The only re
 2. [x] Uncommitted perf/render-cache work: committed. `dev/perf/*.json` (benchmark output) is still tracked; decide whether to keep.
 3. [x] `CONTRIBUTING.md` removed, references cleaned.
 4. [x] README advertises PDF/EPUB: EPUB merged.
-5. [ ] Flaky `test_theme_refresh_rerenders_open_pdf` (window built without `QMainWindow.__init__`): did not recur in the latest runs; confirm in the fresh-clone check.
-6. [ ] Fresh-clone check: clone from GitHub into a temp dir, make a venv, `pip install -r requirements.txt`, run `python -m immersion_app`, run `pytest`.
+5. [x] Flaky `test_theme_refresh_rerenders_open_pdf`: did not recur (full suite passed 3 times, including the fresh clone).
+6. [x] Fresh-clone check (2026-11-11): cloned from GitHub, new venv, `pip install -r requirements-dev.txt`, 665 tests passed, `python -m immersion_app` starts (only an expected "Anki not reachable" warning).
 
 ---
 
@@ -79,7 +79,7 @@ About 1,900 lines with 20 `hasattr` guards that protect widget-creation order in
 
 1. [x] History rewritten and force-pushed; author addresses are noreply.
 2. [x] Merged branches deleted.
-3. [ ] Fresh-clone check (blocker 6).
+3. [x] Fresh-clone check.
 4. [ ] Decide on `dev/perf/*.json` (commit or git-ignore).
 5. [ ] On your own install, open **Settings** and pick your existing deck (new default is `Language Immersion Tools`). Your old `%APPDATA%\LinguaLoop` folder is copied automatically.
 6. [ ] Run the release workflow manually, test the installer.
