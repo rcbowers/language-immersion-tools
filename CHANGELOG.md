@@ -2,7 +2,9 @@
 
 All notable changes to Language Immersion Tools. Versions follow [semantic versioning](https://semver.org/).
 
-## [Unreleased] - 0.9.0, first public release
+## [Unreleased]
+
+## [0.9.0] - 2026-11-11, first public release
 
 ### Added
 - **Five new color themes** in *Settings → Appearance*: Sepia, Forest, Nord, Solarized Dark and Midnight (OLED), alongside Light and Dark. Dark themes also invert PDF pages.
