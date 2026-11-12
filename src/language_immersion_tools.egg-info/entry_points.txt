@@ -1,5 +1,0 @@
-[console_scripts]
-immersion = immersion_app.app:main
-
-[gui_scripts]
-immersion-gui = immersion_app.app:main

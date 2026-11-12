@@ -80,9 +80,9 @@ About 1,900 lines with 20 `hasattr` guards that protect widget-creation order in
 1. [x] History rewritten and force-pushed; author addresses are noreply.
 2. [x] Merged branches deleted.
 3. [x] Fresh-clone check.
-4. [ ] Decide on `dev/perf/*.json` (commit or git-ignore).
+4. [x] `dev/perf/` git-ignored.
 5. [ ] On your own install, open **Settings** and pick your existing deck (new default is `Language Immersion Tools`). Your old `%APPDATA%\LinguaLoop` folder is copied automatically.
 6. [ ] Run the release workflow manually, test the installer.
-7. [ ] Optionally delete `archive/git-backup-before-history-rewrite.bundle` (it still contains the copyrighted files from the old history).
+7. [x] History backup bundle deleted.
 8. [ ] Tag `v0.9.0` (move the CHANGELOG *Unreleased* heading to a dated `0.9.0`), let the workflow attach the installer.
 9. [ ] Flip the repo to public and confirm the CI badge is green.

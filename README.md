@@ -1,11 +1,11 @@
 # Language Immersion Tools
 
-[![Tests](https://github.com/ryanbowers166/language-immersion-tools/actions/workflows/tests.yml/badge.svg)](https://github.com/ryanbowers166/language-immersion-tools/actions/workflows/tests.yml)
+[![Tests](https://github.com/rcbowers/language-immersion-tools/actions/workflows/tests.yml/badge.svg)](https://github.com/rcbowers/language-immersion-tools/actions/workflows/tests.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/ryanbowers166/language-immersion-tools?style=flat&logo=github)](https://github.com/ryanbowers166/language-immersion-tools/stargazers)
-[![GitHub issues](https://img.shields.io/github/issues/ryanbowers166/language-immersion-tools)](https://github.com/ryanbowers166/language-immersion-tools/issues)
-[![Last commit](https://img.shields.io/github/last-commit/ryanbowers166/language-immersion-tools)](https://github.com/ryanbowers166/language-immersion-tools/commits/master)
+[![GitHub stars](https://img.shields.io/github/stars/rcbowers/language-immersion-tools?style=flat&logo=github)](https://github.com/rcbowers/language-immersion-tools/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/rcbowers/language-immersion-tools)](https://github.com/rcbowers/language-immersion-tools/issues)
+[![Last commit](https://img.shields.io/github/last-commit/rcbowers/language-immersion-tools)](https://github.com/rcbowers/language-immersion-tools/commits/master)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
 Language Immersion Tools (LIT) is a free desktop app for immersion-based language learning according to methods like Refold.la (not affiliated). Open a PDF or subtitled video, click words to translate them directly in the reader, and automatically generate an Anki card with the target word + sentence context + translation.
@@ -46,7 +46,7 @@ Your LLM of choice (ChatGPT, Claude, Gemini, Grok, etc.) can assist with this if
 ### Installing from source
 
 ```bash
-git clone https://github.com/ryanbowers166/language-immersion-tools.git
+git clone https://github.com/rcbowers/language-immersion-tools.git
 cd language-immersion-tools
 python -m venv .venv
 # Windows

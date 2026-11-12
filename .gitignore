@@ -19,3 +19,7 @@ dist/
 .idea/
 .vscode/
 .claude/
+
+# Benchmark output
+dev/perf/
+*.egg-info/
