@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pymupdf
 
+from epub_fixtures import make_epub
+
 from immersion_app.core.pdf_service import (
     EPUB_FONT_SIZE,
     EPUB_PAGE_HEIGHT,

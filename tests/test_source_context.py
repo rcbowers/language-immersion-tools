@@ -1,6 +1,8 @@
 from immersion_app.media import source_context
 from immersion_app.media.source_context import extract_url_contexts
 
+from epub_fixtures import make_epub
+
 HTML = """<html><head><title>Noticia</title><script>var x = "no.";</script></head>
 <body><nav>Menu. Inicio.</nav>
 <p>Intro fuera.</p>

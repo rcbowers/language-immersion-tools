@@ -10,6 +10,8 @@ import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QColor
 
+from epub_fixtures import make_epub
+
 from immersion_app.core.appearance_manager import AppearanceMode
 from immersion_app.core.pdf_service import PDFService
 from immersion_app.core.selection_state import SelectionState

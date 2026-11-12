@@ -78,14 +78,6 @@ class MiningController(QObject):
             location=self.window.current_source_location,
         )
 
-    def _source_type(self) -> str:
-        """Mode string, refined to the document kind ("pdf"/"epub") while reading a document."""
-        source_type = self.window.mode_manager.mode_string()
-        pdf_service = getattr(self.window, "pdf_service", None)
-        if source_type == "pdf" and isinstance(getattr(pdf_service, "doc_kind", None), str):
-            return pdf_service.doc_kind
-        return source_type
-
     def add_now(self):
         """Add the current selection to Anki on a worker thread (never blocks the UI)."""
         if not self.selection.word or not self.selection.translation or self.selection.translation == "translating...":
@@ -193,3 +185,11 @@ class MiningController(QObject):
             return
         self.selection.set_translation_error(error_message)
         self.window._set_status(f"Translation failed: {error_message}")
+
+    def _source_type(self) -> str:
+        """Mode string, refined to the document kind ("pdf"/"epub") while reading a document."""
+        source_type = self.window.mode_manager.mode_string()
+        pdf_service = getattr(self.window, "pdf_service", None)
+        if source_type == "pdf" and isinstance(getattr(pdf_service, "doc_kind", None), str):
+            return pdf_service.doc_kind
+        return source_type
