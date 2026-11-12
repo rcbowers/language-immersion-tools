@@ -10,9 +10,9 @@
 
 Language Immersion Tools (LIT) is a free desktop app for immersion-based language learning according to methods like Refold.la (not affiliated). Open a PDF or subtitled video, click words to translate them directly in the reader, and automatically generate an Anki card with the target word + sentence context + translation.
 
-I initially built this for my own personal use. I found that I was wasting a lot of time while doing active immersion in ebooks or TV shows. When I found a word, I would have to stop, copy the word into Google Translate, then manually create an Anki card. I built this to consolidate and partially automate that workflow so I could spend more time actually immersing. LIT grew organically over time as I tweaked and added new features that I wanted, and I personally use it for immersion most days. 
+I initially built this for my own personal use. I found that I was wasting a lot of time while immersing in ebooks or TV shows in my target language. When I found a word, I would have to stop, copy the word into Google Translate, then manually create an Anki card, then go back to immersion. I built this to consolidate and partially automate that workflow so I could spend more time actually immersing. LIT grew organically over time as I tweaked and added new features that I wanted. 
 
-Requests for new features are more than welcome! Please create an issue for this. An experimental branch will be used to contain all the niche features that I add for myself; you may use this branch if you'd like.
+Requests for new features are more than welcome! Please create an issue for this. An experimental branch will be used to contain all the niche features that I add for myself; you may use that branch if you'd like, put the master branch will generally be more stable. 
 
 LIT also tracks analytics about your activity and progress if you're into that kind of thing. Time spent actively using the app, total words mined, the relative frequency of those words (according to standard lists), etc. This is all stored locally for you to use as you please.
 
