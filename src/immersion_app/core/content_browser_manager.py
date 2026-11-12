@@ -77,7 +77,7 @@ class ContentBrowserManager(QObject):
 
         Args:
             file_path: Absolute path to content file
-            content_type: "pdf" or "video"
+            content_type: "pdf", "epub" or "video"
             page_count: Total pages for PDFs
             duration_ms: Duration in milliseconds for videos
             last_position: Dict with "page_index" (PDF) or "video_position_ms" (video)

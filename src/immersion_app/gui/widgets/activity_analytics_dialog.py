@@ -213,7 +213,7 @@ class ActivityAnalyticsDialog(QDialog):
         self.daily_body.setSpacing(10)
         self.content_layout.addWidget(self.daily_section)
 
-        self.empty_label = QLabel("No study sessions yet. Open a PDF or video and interact with it to start building analytics.")
+        self.empty_label = QLabel("No study sessions yet. Open a PDF, EPUB or video and interact with it to start building analytics.")
         self.empty_label.setWordWrap(True)
         self.content_layout.addWidget(self.empty_label)
 
@@ -244,7 +244,7 @@ class ActivityAnalyticsDialog(QDialog):
         self.summary_cards[0].set_content("Today active", _format_duration(summary.get("today_active_seconds", 0)), "Focused study time today")
         self.summary_cards[1].set_content("Today open", _format_duration(summary.get("today_open_seconds", 0)), f"{summary.get('today_sources', 0)} sources touched today")
         self.summary_cards[2].set_content("Streak", f"{summary.get('current_streak_days', 0)} days", f"Best: {summary.get('best_streak_days', 0)} days")
-        self.summary_cards[3].set_content("PDF progress", f"{summary.get('pdf_pages_advanced', 0)} pages", "Cumulative pages advanced")
+        self.summary_cards[3].set_content("Reading progress", f"{summary.get('pdf_pages_advanced', 0)} pages", "Cumulative pages advanced")
         self.summary_cards[4].set_content("Video progress", _format_minutes(summary.get("video_minutes_advanced", 0.0)), "Cumulative playback advanced")
         self.summary_cards[5].set_content("Mining support", f"{summary.get('cards_added_today', 0)} cards today", f"{summary.get('vocabulary_total', 0)} vocab seen")
 
@@ -345,7 +345,7 @@ class ActivityAnalyticsDialog(QDialog):
         totals = QLabel(
             f"Active {_format_duration(day.get('active_seconds', 0))}   "
             f"Open {_format_duration(day.get('open_seconds', 0))}   "
-            f"PDF {int(day.get('pages_advanced', 0))} pages   "
+            f"Docs {int(day.get('pages_advanced', 0))} pages   "
             f"Video {_format_minutes(day.get('minutes_advanced', 0.0))}"
         )
         totals.setStyleSheet(
@@ -366,7 +366,7 @@ class ActivityAnalyticsDialog(QDialog):
 
     @staticmethod
     def _source_subtitle(source: dict) -> str:
-        if source.get("file_type") == "pdf":
+        if source.get("file_type") in ("pdf", "epub"):
             detail = f"{int(source.get('pages_advanced', 0))} pages advanced"
         else:
             detail = f"{_format_minutes(source.get('minutes_advanced', 0.0))} advanced"

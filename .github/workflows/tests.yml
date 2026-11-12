@@ -34,4 +34,4 @@ jobs:
         run: python -m pyflakes src tests auto_miner.py scripts
         continue-on-error: true
       - name: Run tests
-        run: python -m pytest -q
+        run: python -m pytest -q --cov --cov-report=term:skip-covered

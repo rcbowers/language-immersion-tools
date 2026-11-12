@@ -12,6 +12,16 @@ from immersion_app.core.recent_files import get_recent_files, remove_recent_file
 from immersion_app.core.user_data import save_user_data
 
 
+DOCUMENT_SUFFIXES = (".pdf", ".epub")
+
+
+def _entry_location(entry: dict | None) -> tuple[int, int] | None:
+    """``(chapter, chapter_page)`` stored for EPUB positions, if present."""
+    if entry and entry.get("chapter") is not None and entry.get("chapter_page") is not None:
+        return int(entry["chapter"]), int(entry["chapter_page"])
+    return None
+
+
 class WorkspaceController:
     def __init__(self, window, pdf_controller, video_controller):
         self.window = window
@@ -22,7 +32,7 @@ class WorkspaceController:
         path, _ = QFileDialog.getOpenFileName(self.window, "Open source", "", self.window.SUPPORTED_CONTENT_FILTER)
         if not path:
             return
-        if Path(path).suffix.lower() == ".pdf":
+        if Path(path).suffix.lower() in DOCUMENT_SUFFIXES:
             self.pdf_controller.load_pdf(path)
         else:
             self.video_controller.load_video(path)
@@ -76,8 +86,12 @@ class WorkspaceController:
             if entry_path == normalized_path:
                 file_entry = entry
                 break
-        if file_type == "pdf":
-            self.pdf_controller.load_pdf(str(path), initial_page_index=file_entry.get("page_index", 0) if file_entry else 0)
+        if file_type in ("pdf", "epub"):
+            self.pdf_controller.load_pdf(
+                str(path),
+                initial_page_index=file_entry.get("page_index", 0) if file_entry else 0,
+                initial_location=_entry_location(file_entry),
+            )
         else:
             self.video_controller.load_video(str(path), restore_position_ms=file_entry.get("video_position_ms", 0) if file_entry else 0)
 
@@ -100,7 +114,11 @@ class WorkspaceController:
 
         def _try_pdf():
             if pdf_path and Path(pdf_path).exists():
-                self.pdf_controller.load_pdf(pdf_path, initial_page_index=int(session.get("page_index") or 0))
+                self.pdf_controller.load_pdf(
+                    pdf_path,
+                    initial_page_index=int(session.get("page_index") or 0),
+                    initial_location=_entry_location(session),
+                )
                 return True
             return False
 

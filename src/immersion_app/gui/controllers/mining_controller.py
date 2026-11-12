@@ -74,13 +74,23 @@ class MiningController(QObject):
             sentence=self.selection.sentence or self.selection.word,
             translation=self.selection.translation,
             source_name=self.window.current_source_name,
-            source_type=self.window.mode_manager.mode_string(),
+            source_type=self._source_type(),
             location=self.window.current_source_location,
+        )
+
+    def _has_usable_translation(self) -> bool:
+        """True when the selection has a real translation (not empty, pending or an error message)."""
+        translation = self.selection.translation
+        return bool(
+            self.selection.word
+            and translation
+            and translation != "translating..."
+            and not translation.startswith("Translation error:")
         )
 
     def add_now(self):
         """Add the current selection to Anki on a worker thread (never blocks the UI)."""
-        if not self.selection.word or not self.selection.translation or self.selection.translation == "translating...":
+        if not self._has_usable_translation():
             return
         if self._add_in_flight:
             return
@@ -115,7 +125,7 @@ class MiningController(QObject):
         QMessageBox.critical(self.window, "Anki Add Failed", message)
 
     def add_to_queue(self):
-        if not self.selection.word or not self.selection.translation or self.selection.translation == "translating...":
+        if not self._has_usable_translation():
             return
         try:
             payload = self.queue_payload()
@@ -185,3 +195,11 @@ class MiningController(QObject):
             return
         self.selection.set_translation_error(error_message)
         self.window._set_status(f"Translation failed: {error_message}")
+
+    def _source_type(self) -> str:
+        """Mode string, refined to the document kind ("pdf"/"epub") while reading a document."""
+        source_type = self.window.mode_manager.mode_string()
+        pdf_service = getattr(self.window, "pdf_service", None)
+        if source_type == "pdf" and isinstance(getattr(pdf_service, "doc_kind", None), str):
+            return pdf_service.doc_kind
+        return source_type

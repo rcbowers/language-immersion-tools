@@ -96,7 +96,7 @@ class GettingStartedPanel(QFrame):
         self.anki_step.button.clicked.connect(self._on_anki_button)
         self.language_step = _StepRow("Choose your languages", "Change…")
         self.language_step.button.clicked.connect(self.settings_requested.emit)
-        self.open_step = _StepRow("Open a PDF or video", "Open…")
+        self.open_step = _StepRow("Open a PDF, EPUB or video", "Open…")
         self.open_step.button.clicked.connect(self.open_requested.emit)
         for step in (self.anki_step, self.language_step, self.open_step):
             layout.addWidget(step)

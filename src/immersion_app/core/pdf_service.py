@@ -2,16 +2,33 @@
 
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-import fitz
+import pymupdf
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
 from immersion_app.core.perf import perf_timed
 from immersion_app.core.signals import safe_emit
+
+
+# Reflowable documents (EPUB) are laid out onto fixed-size pages so every downstream consumer
+# (render cache, completion tracking, page navigation) sees ordinary, stable pages.
+EPUB_PAGE_WIDTH = 600.0
+EPUB_PAGE_HEIGHT = 800.0
+EPUB_FONT_SIZE = 11.0
+DOC_KIND_PDF = "pdf"
+DOC_KIND_EPUB = "epub"
+REFLOWABLE_SUFFIXES = {".epub"}
+MAX_SENTENCE_CONTEXT_CHARS = 400
+
+
+def doc_kind_for_path(path: str) -> str:
+    """Document kind ("pdf" or "epub") derived from the file suffix."""
+    return DOC_KIND_EPUB if Path(path).suffix.lower() in REFLOWABLE_SUFFIXES else DOC_KIND_PDF
 
 
 @dataclass
@@ -82,7 +99,7 @@ class PDFService(QObject):
         super().__init__(parent)
         self.doc = None
         self.current_path = ""
-        # ``fitz.Document`` is not safe for concurrent use: every access goes through this lock.
+        # ``pymupdf.Document`` is not safe for concurrent use: every access goes through this lock.
         self._doc_lock = threading.RLock()
         self._page_sizes: dict[int, tuple[float, float]] = {}
         # One dedicated render thread so page rendering never starves the global pool
@@ -91,7 +108,9 @@ class PDFService(QObject):
         self._render_pool.setMaxThreadCount(1)
 
     def load_document(self, path: str):
-        doc = fitz.open(path)
+        doc = pymupdf.open(path)
+        if doc.is_reflowable:
+            doc.layout(width=EPUB_PAGE_WIDTH, height=EPUB_PAGE_HEIGHT, fontsize=EPUB_FONT_SIZE)
         self.close_document()
         with self._doc_lock:
             self.doc = doc
@@ -99,6 +118,45 @@ class PDFService(QObject):
             self._page_sizes = {}
         self.document_loaded.emit(path, doc.page_count)
         return doc
+
+    @property
+    def doc_kind(self) -> str:
+        """"epub" for reflowable documents, otherwise "pdf"."""
+        return doc_kind_for_path(self.current_path) if self.current_path else DOC_KIND_PDF
+
+    @property
+    def is_reflowable(self) -> bool:
+        return self.doc is not None and bool(self.doc.is_reflowable)
+
+    def get_toc(self) -> list[tuple[int, str, int]]:
+        """Table of contents as ``(level, title, 0-based page index)`` entries."""
+        with self._doc_lock:
+            if self.doc is None:
+                return []
+            entries = []
+            for level, title, page in self.doc.get_toc():
+                if page >= 1:
+                    entries.append((int(level), str(title), int(page) - 1))
+            return entries
+
+    def location_for_page(self, page_index: int) -> tuple[int, int] | None:
+        """Layout-independent-ish ``(chapter, page_in_chapter)`` for reflowable docs, else None."""
+        with self._doc_lock:
+            if not self.is_reflowable or not (0 <= page_index < self.doc.page_count):
+                return None
+            chapter, page = self.doc.location_from_page_number(page_index)
+            return int(chapter), int(page)
+
+    def page_for_location(self, chapter: int, page: int) -> int | None:
+        """Inverse of ``location_for_page``; None when unavailable or out of range."""
+        with self._doc_lock:
+            if not self.is_reflowable:
+                return None
+            try:
+                index = int(self.doc.page_number_from_location((int(chapter), int(page))))
+            except Exception:
+                return None
+            return index if 0 <= index < self.doc.page_count else None
 
     def close_document(self):
         with self._doc_lock:
@@ -154,7 +212,7 @@ class PDFService(QObject):
             if self.doc is None:
                 return None
             page = self.doc.load_page(page_index)
-            matrix = fitz.Matrix(zoom_factor, zoom_factor)
+            matrix = pymupdf.Matrix(zoom_factor, zoom_factor)
             pix = page.get_pixmap(matrix=matrix, alpha=False)
             if dark:
                 pix.invert_irect()
@@ -222,7 +280,33 @@ class PDFService(QObject):
             return ""
         line_key = (int(selected_words[0][5]), int(selected_words[0][6]))
         line_words = line_map.get(line_key, [selected_words[0]])
-        return " ".join(item[4] for item in line_words)
+        line_text = " ".join(item[4] for item in line_words)
+        if not self.is_reflowable:
+            return line_text
+        # Book text flows across lines, so a full sentence is a better mining context than one line.
+        return self._sentence_context(selected_words[0], line_map) or line_text
+
+    def _sentence_context(self, word: tuple, line_map: dict[tuple[int, int], list[tuple]]) -> str:
+        """The punctuation-delimited sentence on the page containing ``word`` ("" if it can't be found)."""
+        # Sentences never cross a block (paragraph/heading) boundary, so only the word's own block is searched.
+        block = int(word[5])
+        pieces: list[str] = []
+        start = None
+        offset = 0
+        for key in sorted(k for k in line_map if k[0] == block):
+            for item in line_map[key]:
+                if key[1] == int(word[6]) and int(item[7]) == int(word[7]):
+                    start = offset
+                pieces.append(str(item[4]))
+                offset += len(item[4]) + 1
+        if start is None:
+            return ""
+        text = " ".join(pieces)
+        for match in re.finditer(r"[^.!?…]+(?:[.!?…]+|$)", text, flags=re.DOTALL):
+            if match.start() <= start < match.end():
+                sentence = " ".join(match.group(0).split())
+                return sentence if len(sentence) <= MAX_SENTENCE_CONTEXT_CHARS else ""
+        return ""
 
     def source_name(self) -> str:
         return Path(self.current_path).name if self.current_path else ""
