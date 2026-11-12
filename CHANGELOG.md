@@ -6,6 +6,7 @@ All notable changes to Language Immersion Tools. Versions follow [semantic versi
 
 ### Added
 - **Five new color themes** in *Settings → Appearance*: Sepia, Forest, Nord, Solarized Dark and Midnight (OLED), alongside Light and Dark. Dark themes also invert PDF pages.
+- **EPUB reading**: open `.epub` books like PDFs (click/Shift+click/hover translation, mining, zoom, recent files, content browser thumbnails, last-session restore). Mined sentences use the full sentence instead of one text line, and `auto_miner.py` accepts `.epub` sources. EPUBs are laid out on fixed 600x800 pt pages, so page numbers are layout-dependent; completion tracking stays page-index based and assumes this layout stays fixed. Reading position is also stored as chapter + page-in-chapter. The chapter rail and reading width/font-size settings for EPUB are not done yet.
 - **Settings dialog** (Settings button or Ctrl+,): Anki deck, note type, sentence/translation fields, tags and AnkiConnect URL, loaded live from Anki, with a *Create deck* button. Also learning/native language, online/offline translation, background pre-translation, appearance and the data folder.
 - **Getting started checklist** on the welcome screen: shows whether Anki is reachable and set up correctly (with *Start Anki*), your languages, and how to open your first source.
 - Page counter shows the total (`12 / 146`).

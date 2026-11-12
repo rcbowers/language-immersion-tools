@@ -2,7 +2,7 @@
 """Interactively mine phrases into Language Immersion Tools Anki cards.
 
 The queue file groups words under ``# <source>`` headers, where the source is a
-local PDF/SRT path or a web URL.
+local PDF/EPUB/SRT path or a web URL.
 """
 
 from __future__ import annotations

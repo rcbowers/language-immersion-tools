@@ -163,7 +163,7 @@ class ContentBrowserGrid(QWidget):
         main_layout.addWidget(self.scroll_area)
 
         # Empty state lives outside the flow layout so it can be centred.
-        self.empty_label = QLabel("No content yet\nPDFs and videos you open will appear here")
+        self.empty_label = QLabel("No content yet\nPDFs, EPUBs and videos you open will appear here")
         self.empty_label.setAlignment(Qt.AlignCenter)
         self.empty_label.setWordWrap(True)
         main_layout.addWidget(self.empty_label)

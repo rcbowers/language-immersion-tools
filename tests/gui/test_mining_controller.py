@@ -59,6 +59,7 @@ class FakeAnkiService(QObject):
 
 class FakeWindow:
     def __init__(self):
+        self.pdf_service = type("_Pdf", (), {"doc_kind": "epub"})()
         self.current_source_name = "clip.mp4"
         self.current_source_location = "00:01"
         self.mode_manager = type("_Mode", (), {"mode_string": lambda self: "video"})()
@@ -168,6 +169,17 @@ def test_add_now_shows_non_connection_errors(setup):
     # A new add is allowed after a failure.
     controller.add_now()
     assert len(anki.add_calls) == 2
+
+
+def test_queue_payload_source_type_follows_document_kind(setup):
+    controller, window, _selection, _anki = setup()
+    assert controller.queue_payload()["source_type"] == "video"
+
+    window.mode_manager = type("_Mode", (), {"mode_string": lambda self: "pdf"})()
+    assert controller.queue_payload()["source_type"] == "epub"
+
+    window.pdf_service.doc_kind = "pdf"
+    assert controller.queue_payload()["source_type"] == "pdf"
 
 
 def test_add_to_queue_shows_feedback(setup):

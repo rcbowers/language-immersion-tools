@@ -74,7 +74,7 @@ class MiningController(QObject):
             sentence=self.selection.sentence or self.selection.word,
             translation=self.selection.translation,
             source_name=self.window.current_source_name,
-            source_type=self.window.mode_manager.mode_string(),
+            source_type=self._source_type(),
             location=self.window.current_source_location,
         )
 
@@ -195,3 +195,11 @@ class MiningController(QObject):
             return
         self.selection.set_translation_error(error_message)
         self.window._set_status(f"Translation failed: {error_message}")
+
+    def _source_type(self) -> str:
+        """Mode string, refined to the document kind ("pdf"/"epub") while reading a document."""
+        source_type = self.window.mode_manager.mode_string()
+        pdf_service = getattr(self.window, "pdf_service", None)
+        if source_type == "pdf" and isinstance(getattr(pdf_service, "doc_kind", None), str):
+            return pdf_service.doc_kind
+        return source_type

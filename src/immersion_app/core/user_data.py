@@ -88,6 +88,8 @@ def default_user_data():
             "content_type": "",
             "pdf_path": "",
             "page_index": 0,
+            "chapter": None,
+            "chapter_page": None,
             "video_path": "",
             "video_position_ms": 0,
             "srt_path": "",

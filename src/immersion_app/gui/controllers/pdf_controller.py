@@ -43,12 +43,25 @@ class PDFController:
             pdf_service.page_rendered.connect(self._on_page_rendered)
             pdf_service.page_render_failed.connect(self._on_page_render_failed)
 
-    def load_pdf(self, path: str, initial_page_index: int = 0):
+    def position_snapshot(self) -> dict:
+        """Current reading position. EPUBs add ``chapter``/``chapter_page`` since page indexes depend on layout."""
+        position = {"page_index": self.current_page_index}
+        location = self.pdf_service.location_for_page(self.current_page_index)
+        if location is not None:
+            position["chapter"], position["chapter_page"] = location
+        return position
+
+    def load_pdf(self, path: str, initial_page_index: int = 0, initial_location: tuple[int, int] | None = None):
+        """Open a PDF or EPUB. ``initial_location`` is a ``(chapter, chapter_page)`` pair that wins over the index (EPUB)."""
         try:
             doc = self.pdf_service.load_document(path)
         except Exception as exc:
-            QMessageBox.critical(self.window, "PDF Error", f"Failed to open PDF:\n{exc}")
+            QMessageBox.critical(self.window, "Document Error", f"Failed to open document:\n{exc}")
             return
+        if initial_location is not None:
+            located = self.pdf_service.page_for_location(*initial_location)
+            if located is not None:
+                initial_page_index = located
         self.reset_render_state()
         self.current_pdf_path = path
         self.window.current_pdf_path = path
@@ -63,22 +76,22 @@ class PDFController:
         QTimer.singleShot(0, self.window._reset_pdf_scroll_position)
         self.window._update_source_summary()
         self.window._persist_session()
-        self.window._set_status(f"Opened PDF: {Path(path).name}")
+        self.window._set_status(f"Opened {self.pdf_service.doc_kind.upper()}: {Path(path).name}")
         self.window.command_bar.set_title(Path(path).name, f"{doc.page_count} pages")
         self.window.command_bar.set_file_loaded(True)
         self.window.command_bar.set_page_info(self.current_page_index + 1, doc.page_count)
         self.window._update_command_bar_stats()
         self.window.mode_manager.set_pdf_loaded(True)
         self.window.mode_manager.set_mode(WorkspaceMode.PDF, force=True)
-        add_recent_file(self.window.user_data, str(path), "pdf", {"page_index": self.current_page_index})
+        add_recent_file(self.window.user_data, str(path), self.pdf_service.doc_kind, self.position_snapshot())
 
         # Add to content browser
         if self.content_browser_manager:
             self.content_browser_manager.add_content(
                 file_path=str(path),
-                content_type="pdf",
+                content_type=self.pdf_service.doc_kind,
                 page_count=doc.page_count,
-                last_position={"page_index": self.current_page_index}
+                last_position=self.position_snapshot()
             )
 
         save_user_data(self.window.user_data)
@@ -317,7 +330,7 @@ class PDFController:
         if self.content_browser_manager and self.current_pdf_path:
             self.content_browser_manager.update_last_position(
                 self.current_pdf_path,
-                {"page_index": self.current_page_index}
+                self.position_snapshot()
             )
         self.window._persist_session()
 
@@ -334,7 +347,7 @@ class PDFController:
         if self.content_browser_manager and self.current_pdf_path:
             self.content_browser_manager.update_last_position(
                 self.current_pdf_path,
-                {"page_index": self.current_page_index}
+                self.position_snapshot()
             )
         self.window._persist_session()
 
@@ -351,7 +364,7 @@ class PDFController:
         if self.content_browser_manager and self.current_pdf_path:
             self.content_browser_manager.update_last_position(
                 self.current_pdf_path,
-                {"page_index": self.current_page_index}
+                self.position_snapshot()
             )
         self.window._persist_session()
 

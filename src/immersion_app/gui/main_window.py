@@ -142,7 +142,7 @@ class _StartupOverlay(QWidget):
 
 
 class UnifiedSentenceMinerWindow(QMainWindow):
-    SUPPORTED_CONTENT_FILTER = "Content Files (*.pdf *.mp4 *.mkv *.avi *.mov *.webm)"
+    SUPPORTED_CONTENT_FILTER = "Content Files (*.pdf *.epub *.mp4 *.mkv *.avi *.mov *.webm)"
 
     def __init__(self):
         super().__init__()
@@ -717,9 +717,12 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         content_type = content_item.get("type", "")
         last_position = content_item.get("last_position", {})
 
-        if content_type == "pdf":
+        if content_type in ("pdf", "epub"):
             initial_page = last_position.get("page_index", 0)
-            self.pdf_controller.load_pdf(file_path, initial_page_index=initial_page)
+            location = None
+            if last_position.get("chapter") is not None and last_position.get("chapter_page") is not None:
+                location = (int(last_position["chapter"]), int(last_position["chapter_page"]))
+            self.pdf_controller.load_pdf(file_path, initial_page_index=initial_page, initial_location=location)
         elif content_type == "video":
             restore_position = last_position.get("video_position_ms", 0)
             self.video_controller.load_video(file_path, restore_position_ms=restore_position)
@@ -839,7 +842,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         layout.setSpacing(8)
 
         # Title
-        self.welcome_title_label = QLabel("Open a PDF or video to start")
+        self.welcome_title_label = QLabel("Open a PDF, EPUB or video to start")
         self.welcome_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.welcome_title_label)
 
@@ -853,7 +856,7 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         button_row = QHBoxLayout()
         button_row.setSpacing(12)
 
-        self.welcome_open_button = QPushButton("Open PDF or video…")
+        self.welcome_open_button = QPushButton("Open PDF, EPUB or video…")
         self.welcome_open_button.setFixedHeight(40)
         self.welcome_open_button.setMinimumWidth(140)
         self.welcome_open_button.clicked.connect(self._open_content_dialog)
@@ -1844,6 +1847,8 @@ class UnifiedSentenceMinerWindow(QMainWindow):
                 "content_type": mode_string,
                 "pdf_path": self.current_pdf_path,
                 "page_index": int(self.current_page_index),
+                "chapter": None,
+                "chapter_page": None,
                 "video_path": self.current_video_path,
                 "video_position_ms": video_pos,
                 "srt_path": self.current_srt_path,
@@ -1865,12 +1870,10 @@ class UnifiedSentenceMinerWindow(QMainWindow):
         # Update recent files with latest position
         from immersion_app.core.recent_files import add_recent_file
         if mode == WorkspaceMode.PDF and self.current_pdf_path:
-            add_recent_file(
-                self.user_data,
-                str(self.current_pdf_path),
-                "pdf",
-                {"page_index": self.current_page_index}
-            )
+            position = self.pdf_controller.position_snapshot()
+            session["chapter"] = position.get("chapter")
+            session["chapter_page"] = position.get("chapter_page")
+            add_recent_file(self.user_data, str(self.current_pdf_path), self.pdf_service.doc_kind, position)
         elif mode == WorkspaceMode.VIDEO and self.current_video_path:
             add_recent_file(
                 self.user_data,

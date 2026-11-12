@@ -20,7 +20,7 @@ LIT also tracks analytics about your activity and progress if you're into that k
 
 ## Features
 
-- PDF/EPUB reader. Click a word to translate it, Shift+click to translate phrase, or hold Ctrl and hover for a quick lookup. 
+- PDF/EPUB reader (EPUB page numbers depend on the reader's fixed page layout). Click a word to translate it, Shift+click to translate phrase, or hold Ctrl and hover for a quick lookup. 
 - Video player with clickable subtitles. Load an `.srt` file. Subtitles can be clicked and mined into Anki cards just like documents.
 - Automated Anki card generation. Following the Refold method (refold.la/roadmap/library/sentence-mining), you can click "add to Anki" after translating a word or phrase to automatically generate an Anki card. The front of the card contains the sentence the word came from (dynamically detected by the app) with the target word highlighted, and the back shows the target word's translation.
 - Online or offline translation. Uses Google Translate by default, or MarianMT models running locally if you install the offline extras.

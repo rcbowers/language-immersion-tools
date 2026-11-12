@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from immersion_app.core.pdf_service import doc_kind_for_path
+from immersion_app.core.recent_files import PAGE_FILE_TYPES
 from immersion_app.core.user_data import save_user_data
 
 
@@ -80,6 +82,10 @@ class UsageTimeTracker(QObject):
         self._is_window_focused = focused
         self._update_active_status()
 
+    @staticmethod
+    def _doc_kind(file_path: str) -> str:
+        return doc_kind_for_path(file_path)
+
     def on_document_loaded(self, file_path: str, page_count: int = 0) -> None:
         """Session start for PDF documents."""
         # Finalize previous file context if one is open
@@ -88,7 +94,7 @@ class UsageTimeTracker(QObject):
 
         # Start new session
         self._current_file_path = self._normalize_path(file_path)
-        self._current_file_type = "pdf"
+        self._current_file_type = self._doc_kind(file_path)
         self._session_start_time = datetime.now()
         self._session_start_location = "Page 1"
         self._current_location = "Page 1"
@@ -98,7 +104,7 @@ class UsageTimeTracker(QObject):
         self._current_position_ms = None
         self._activity_buffer.clear()
 
-        self.session_started.emit(file_path, "pdf")
+        self.session_started.emit(file_path, self._current_file_type)
         self._update_active_status()
 
     def on_document_closed(self) -> None:
@@ -139,7 +145,7 @@ class UsageTimeTracker(QObject):
         normalized_index = max(0, int(page_index))
         self._current_page_index = normalized_index
         self._current_location = f"Page {normalized_index + 1}"
-        if self._current_file_type == "pdf" and self._start_page_index is None:
+        if self._current_file_type in PAGE_FILE_TYPES and self._start_page_index is None:
             self._start_page_index = normalized_index
             self._session_start_location = self._current_location
 
@@ -240,7 +246,7 @@ class UsageTimeTracker(QObject):
             "start_location": self._session_start_location,
             "end_location": self._current_location,
         }
-        if self._current_file_type == "pdf":
+        if self._current_file_type in PAGE_FILE_TYPES:
             start_page_index = self._start_page_index if self._start_page_index is not None else 0
             end_page_index = self._current_page_index if self._current_page_index is not None else start_page_index
             metadata["start_page_index"] = start_page_index

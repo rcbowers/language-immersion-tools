@@ -133,16 +133,14 @@ Before implementing similar functionality, study these exemplar files:
 
 ---
 
-## 🚫 Services That DON'T Exist Yet
+## Domain Services
 
-**CRITICAL: These services need to be extracted from `main_window.py` before use.**
+These services have been extracted from `main_window.py` and exist in `core/`:
 
-The following services are **planned but not implemented**:
-
-- ❌ `TranslationService` - Extract translation logic first
-- ❌ `AnkiService` - Extract Anki logic first
-- ❌ `PDFService` - Extract PDF logic first
-- ❌ `VideoService` - Extract video logic first
+- ✅ `TranslationService` - Translation cache, backends, async requests
+- ✅ `AnkiService` - Anki connection, card queue, add/process operations
+- ✅ `PDFService` - PDF **and EPUB** documents (`doc_kind`, reflow layout for EPUB, TOC, chapter locations, rendering, word extraction, context)
+- ✅ `VideoService` - Subtitle management, timing, context
 
 **If your feature needs one of these:**
 
