@@ -1,0 +1,12 @@
+[run]
+source =
+    src/immersion_app
+    auto_miner
+branch = False
+
+[report]
+show_missing = False
+skip_empty = True
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
