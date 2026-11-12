@@ -1,7 +1,9 @@
 import os
+import sys
 from pathlib import Path
 
 import auto_miner
+import pytest
 from immersion_app.core.auto_mining import MiningCandidate
 
 
@@ -456,6 +458,7 @@ def test_main_fails_when_queue_has_no_sections(tmp_path, monkeypatch):
     assert auto_miner.main([str(queue)]) == 1
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="requires the Windows-only msvcrt module")
 def test_main_saves_edited_queue_even_when_anki_fails_to_start(tmp_path, monkeypatch):
     import msvcrt
 
