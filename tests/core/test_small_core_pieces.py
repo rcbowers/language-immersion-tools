@@ -197,4 +197,4 @@ def test_noisy_third_party_loggers_are_quieted(isolated_logging):
 
 
 def test_get_logger_returns_named_logger():
-    assert logging_config.get_logger("lingualoop.test") is logging.getLogger("lingualoop.test")
+    assert logging_config.get_logger("immersion.test") is logging.getLogger("immersion.test")

@@ -11,7 +11,8 @@ All notable changes to Language Immersion Tools. Versions follow [semantic versi
 - **Getting started checklist** on the welcome screen: shows whether Anki is reachable and set up correctly (with *Start Anki*), your languages, and how to open your first source.
 - Page counter shows the total (`12 / 146`).
 - `auto_miner.py --deck` and the `IMMERSION_AUTOMINE_FILE` environment variable. Both CLIs now use the Anki settings chosen in the app.
-- GPL-3.0 license, contributor guide, GitHub issue/PR templates and a CI workflow.
+- **Windows installer** (PyInstaller + Inno Setup, built by `packaging/build.ps1` and by the `release` GitHub Action on `v*` tags). `python -m immersion_app` also works. The version is shown in *Settings*.
+- GPL-3.0 license, GitHub issue/PR templates and a CI workflow.
 
 ### Changed
 - **Renamed from LinguaLoop to Language Immersion Tools.** Your data folder is copied from `%APPDATA%\LinguaLoop` to `%APPDATA%\LanguageImmersionTools` on first start (the old folder is left in place). The `LINGUALOOP_DATA_DIR`, `LINGUALOOP_AUTOMINE_FILE` and `LINGUALOOP_PERF` environment variables still work, but are now `IMMERSION_DATA_DIR`, `IMMERSION_AUTOMINE_FILE` and `IMMERSION_PERF`. New installs default to the `Language Immersion Tools` Anki deck and tag; existing settings are unchanged. The launcher is now `run_immersion.bat`.
@@ -112,7 +113,7 @@ Test Coverage:
 
 #### Main Window Refactor Cutover
 
-Refactored LinguaLoop's `main_window.py` around extracted services, controllers, and helper widgets so the window is no longer the primary owner of translation, PDF, video/subtitle, and queue workflows.
+Refactored the app's `main_window.py` around extracted services, controllers, and helper widgets so the window is no longer the primary owner of translation, PDF, video/subtitle, and queue workflows.
 
 Added:
 - `TranslationService` for translation cache ownership, backend mode/language switching, request deduplication, and async translation/prefetch tasks
@@ -144,15 +145,15 @@ The panel is minimizable to a small icon, repositions on window resize, and foll
 
 #### Added Dark Mode And PDF Inversion
 
-Added a persisted light/dark appearance setting in the gear menu, wired the GUI theme system to switch palettes at runtime, and refreshed the main LinguaLoop widgets in place when the mode changes. In PDF mode, dark appearance now inverts the rendered page image before highlights are painted so text-heavy PDFs display as dark background with light text.
+Added a persisted light/dark appearance setting in the gear menu, wired the GUI theme system to switch palettes at runtime, and refreshed the main widgets in place when the mode changes. In PDF mode, dark appearance now inverts the rendered page image before highlights are painted so text-heavy PDFs display as dark background with light text.
 
 #### Fixed Anki "Today" Counter
 
-Added persisted per-day Anki add analytics for LinguaLoop-managed card additions and wired the command bar stats chip to use that state. The top-right counter now increments on successful direct adds and queued-card processing instead of always showing `0 today`.
+Added persisted per-day Anki add analytics for app-managed card additions and wired the command bar stats chip to use that state. The top-right counter now increments on successful direct adds and queued-card processing instead of always showing `0 today`.
 
 #### Removed Embedded Console Pane
 
-Removed the bottom-left `>_` console toggle and in-app console pane. LinguaLoop now sends runtime logs to the main Python terminal while keeping session log files on disk.
+Removed the bottom-left `>_` console toggle and in-app console pane. The app now sends runtime logs to the main Python terminal while keeping session log files on disk.
 
 #### Compact PDF Header/Footer And Scroll Reset
 

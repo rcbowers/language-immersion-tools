@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from immersion_app import __version__
 from immersion_app.core.appearance_manager import available_themes
 from immersion_app.gui.theme import Theme
 
@@ -165,6 +166,10 @@ class SettingsDialog(QDialog):
         data_row.addWidget(self.data_folder_label, 1)
         data_row.addWidget(open_button)
         form.addRow("Data folder", data_row)
+
+        version_label = QLabel(__version__)
+        version_label.setStyleSheet(Theme.get_label_style("caption"))
+        form.addRow("Version", version_label)
         return group
 
     # ---- population ---------------------------------------------------

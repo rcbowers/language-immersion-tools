@@ -52,7 +52,7 @@ Intended: cards are never silently lost; duplicate-note errors reach the UI; the
 - `_on_status_finished`: sets `setup_status` (and the fallback when `status` is `None`); only emits `vocabulary_loaded` when words are not `None`. `_on_status_failed` marks disconnected and emits `setup_status_changed`.
 - `queue_card` persists then emits `queue_entry_added`; `build_queue_payload` uses the word when the sentence is empty.
 
-### 2c. `core/queue_store.py` (15%, `anki_snapshot` 29%), use the `LINGUALOOP_DATA_DIR` temp folder from `conftest.py`
+### 2c. `core/queue_store.py` (15%, `anki_snapshot` 29%), use the `IMMERSION_DATA_DIR` temp folder from `conftest.py`
 
 - Save then load round trip with non-ASCII text (Japanese, accents).
 - Atomic save: no `.tmp` left behind; the old file survives if the write raises (patch `write_text`).

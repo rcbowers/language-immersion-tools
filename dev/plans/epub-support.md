@@ -1,7 +1,7 @@
 # Plan: EPUB support in the reader (alongside PDF)
 
 ## Context
-LinguaLoop's reader is PDF-only. README already advertises "PDF/EPUB reader", but no EPUB code exists. PyMuPDF (already a dependency, >=1.24) opens EPUB natively and returns the same `get_text("words")` tuples, so the existing render -> click -> word -> translate pipeline works unchanged. No new dependency is needed. The new work is (a) reflow handling, (b) stable position persistence, and (c) fixing the places where the type "pdf" is hard-coded.
+The app's reader is PDF-only. README already advertises "PDF/EPUB reader", but no EPUB code exists. PyMuPDF (already a dependency, >=1.24) opens EPUB natively and returns the same `get_text("words")` tuples, so the existing render -> click -> word -> translate pipeline works unchanged. No new dependency is needed. The new work is (a) reflow handling, (b) stable position persistence, and (c) fixing the places where the type "pdf" is hard-coded.
 
 ## Design decisions
 1. **Keep `WorkspaceMode.PDF` as the single "document" mode.** Do not add `WorkspaceMode.EPUB`. That avoids a new stack page, shortcut group and `mode_string` branch. Distinguish the kind with a `file_type` of `"pdf"` or `"epub"` carried by `PDFService` (`doc_kind` property, derived from the file suffix). `ModeManager.mode_string()` still returns `"pdf"`; the Anki `source_type` should use the doc kind.

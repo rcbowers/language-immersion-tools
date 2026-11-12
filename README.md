@@ -29,7 +29,13 @@ LIT also tracks analytics about your activity and progress if you're into that k
 Currently supports Spanish, French, Italian, Japanese, Chinese and English, in any combination.
 
 ## Install
-A packaged installer is coming soon, but for now you will need to clone this repository and install from source. Your LLM of choice (ChatGPT, Claude, Gemini, Grok, etc.) can assist with this if needed.
+### Windows installer
+
+Download `LanguageImmersionTools-Setup-<version>.exe` from the [latest release](../../releases/latest) and run it (no admin rights needed). The installer is not code-signed, so Windows SmartScreen may show "Windows protected your PC": click *More info*, then *Run anyway*. The installer includes online translation only. Offline translation and subtitle generation need the source install below.
+
+### Install from source (any platform)
+
+Your LLM of choice (ChatGPT, Claude, Gemini, Grok, etc.) can assist with this if needed.
 
 ### Requirements
 
@@ -37,7 +43,7 @@ A packaged installer is coming soon, but for now you will need to clone this rep
 - Python 3.11 or newer. 
 - FFmpeg on your `PATH`. You only need this for generating subtitles or using the audio tools.
 
-### Installing from from source
+### Installing from source
 
 ```bash
 git clone https://github.com/ryanbowers166/language-immersion-tools.git
