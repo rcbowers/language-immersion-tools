@@ -376,12 +376,12 @@ class TestEdgeCases:
             assert usage > 0
 
     @patch("immersion_app.core.usage_time_tracker.save_user_data")
-    def test_session_metadata(self, mock_save, empty_user_data):
+    def test_session_metadata(self, mock_save, empty_user_data, tmp_path):
         """Verify session metadata is correctly stored."""
         tracker = UsageTimeTracker(empty_user_data)
         tracker.set_window_focused(True)
 
-        tracker.on_document_loaded("C:\\test\\book.pdf")
+        tracker.on_document_loaded(str(tmp_path / "book.pdf"))
         tracker.set_pdf_page_index(0)
         tracker.set_pdf_page_index(4)
         tracker.update_location("Page 5")

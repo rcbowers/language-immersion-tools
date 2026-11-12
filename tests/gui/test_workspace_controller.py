@@ -93,7 +93,7 @@ def test_recent_pdf_passes_saved_page(tmp_path):
     add_recent_file(data, str(book), "pdf", {"page_index": 41})
     controller, window, pdf, video = _make(data)
     controller.on_recent_file_selected(str(book), "pdf")
-    assert pdf.load_pdf == [((str(book),), {"initial_page_index": 41})]
+    assert pdf.load_pdf == [((str(book),), {"initial_page_index": 41, "initial_location": None})]
     assert not video.load_video
 
 
@@ -112,7 +112,7 @@ def test_recent_file_not_in_list_starts_at_zero(tmp_path):
     book.write_bytes(b"%PDF")
     controller, window, pdf, video = _make()
     controller.on_recent_file_selected(str(book), "pdf")
-    assert pdf.load_pdf == [((str(book),), {"initial_page_index": 0})]
+    assert pdf.load_pdf == [((str(book),), {"initial_page_index": 0, "initial_location": None})]
 
 
 def test_missing_recent_file_is_removed_and_user_told(tmp_path, _no_disk_or_dialogs):
@@ -165,7 +165,7 @@ def test_restore_pdf_session(tmp_path):
     session, files = _session(tmp_path, content_type="pdf")
     controller, window, pdf, video = _make({"recent_files": [], "last_session": session})
     controller.restore_last_session()
-    assert pdf.load_pdf == [((files["book.pdf"],), {"initial_page_index": 7})]
+    assert pdf.load_pdf == [((files["book.pdf"],), {"initial_page_index": 7, "initial_location": None})]
     assert not video.load_video
 
 
@@ -174,7 +174,7 @@ def test_restore_falls_through_to_pdf_when_video_is_gone(tmp_path):
     controller, window, pdf, video = _make({"recent_files": [], "last_session": session})
     controller.restore_last_session()
     assert not video.load_video
-    assert pdf.load_pdf == [((files["book.pdf"],), {"initial_page_index": 7})]
+    assert pdf.load_pdf == [((files["book.pdf"],), {"initial_page_index": 7, "initial_location": None})]
 
 
 def test_restore_falls_through_to_video_when_pdf_is_gone(tmp_path):

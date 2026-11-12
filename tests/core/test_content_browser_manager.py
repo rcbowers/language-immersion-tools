@@ -1,5 +1,7 @@
 """Tests for ContentBrowserManager."""
 
+import os
+import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -174,12 +176,17 @@ class TestContentBrowserManager(unittest.TestCase):
 
     def test_path_normalization(self):
         """Paths are normalized for consistent storage."""
-        # Add with different path formats
-        self.manager.add_content("C:\\test\\book.pdf", "pdf")
+        base = Path(tempfile.gettempdir()) / "immersion_test"
+        self.manager.add_content(str(base / "book.pdf"), "pdf")
 
-        # Should find with normalized path
-        item = self.manager.get_content_by_path("c:\\TEST\\book.pdf")
+        # Equivalent path with a redundant "sub/.." segment resolves to the same item
+        item = self.manager.get_content_by_path(str(base / "sub" / ".." / "book.pdf"))
         self.assertIsNotNone(item)
+
+    @unittest.skipUnless(os.name == "nt", "case-insensitive paths are Windows-only")
+    def test_path_normalization_ignores_case_on_windows(self):
+        self.manager.add_content("C:\\test\\book.pdf", "pdf")
+        self.assertIsNotNone(self.manager.get_content_by_path("c:\\TEST\\book.pdf"))
 
     def test_preview_hash_deterministic(self):
         """Preview hash is deterministic based on file path."""
